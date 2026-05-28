@@ -4,13 +4,13 @@
 
 // ─── Network / Offline ────────────────────────────────────────────────────────
 
-export type NetworkState = 'online' | 'offline' | 'unknown';
+export type NetworkState = "online" | "offline" | "unknown";
 
-export type SyncStatus = 'synced' | 'pending' | 'syncing' | 'error';
+export type SyncStatus = "synced" | "pending" | "syncing" | "error";
 
 export interface QueuedOperation {
   id: string;
-  type: 'create' | 'update' | 'delete';
+  type: "create" | "update" | "delete";
   endpoint: string;
   payload: unknown;
   retries: number;
@@ -19,7 +19,7 @@ export interface QueuedOperation {
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
 
-export type ThemeMode = 'light' | 'dark' | 'system';
+export type ThemeMode = "light" | "dark" | "system";
 
 export interface ThemeColors {
   background: string;
@@ -36,7 +36,7 @@ export interface ThemeColors {
 
 // ─── Analytics / Dashboard ────────────────────────────────────────────────────
 
-export type AnalyticsPeriod = '7d' | '30d' | '90d' | 'all';
+export type AnalyticsPeriod = "7d" | "30d" | "90d" | "all";
 
 export interface MetricCard {
   id: string;
@@ -44,12 +44,12 @@ export interface MetricCard {
   value: number;
   previousValue: number;
   unit: string;
-  trend: 'up' | 'down' | 'flat';
+  trend: "up" | "down" | "flat";
   trendPct: number;
 }
 
 export interface ChartDataPoint {
-  label: string;       // x-axis label (date, week, etc.)
+  label: string; // x-axis label (date, week, etc.)
   value: number;
   secondaryValue?: number;
 }
@@ -68,12 +68,44 @@ export interface DashboardData {
   }>;
 }
 
+export interface PortfolioSummary {
+  id: string;
+  title: string;
+  subtitle: string;
+  creator: string;
+  value: string;
+  followers: number;
+  change: number;
+  tags: string[];
+}
+
+export type ProjectBountyKind = "project" | "bounty";
+export type ProjectBountyStatus = "Live" | "Closing" | "Awarded";
+
+export interface ProjectBountyItem {
+  id: string;
+  kind: ProjectBountyKind;
+  title: string;
+  subtitle: string;
+  reward: string;
+  due: string;
+  status: ProjectBountyStatus;
+  tags: string[];
+}
+
+export interface HomeData {
+  trendingPortfolios: PortfolioSummary[];
+  quickMetrics: MetricCard[];
+  projectBountyItems: ProjectBountyItem[];
+}
+
 // ─── Navigation ───────────────────────────────────────────────────────────────
 
 export type RootStackParamList = {
   MainTabs: undefined;
   Dashboard: { period?: AnalyticsPeriod };
   LanguageSettings: undefined;
+  BiometricAuth: undefined;
 };
 
 export type MainTabParamList = {

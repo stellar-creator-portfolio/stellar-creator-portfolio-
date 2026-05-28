@@ -17,7 +17,8 @@
       "bundleIdentifier": "com.stellar.creatorportfolio",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Stellar needs access to your photo library to upload portfolio images.",
-        "NSCameraUsageDescription": "Stellar needs camera access to capture portfolio photos."
+        "NSCameraUsageDescription": "Stellar needs camera access to capture portfolio photos.",
+        "NSFaceIDUsageDescription": "Stellar uses Face ID or Touch ID to securely authenticate portfolio access."
       }
     },
     "android": {
@@ -26,10 +27,7 @@
         "backgroundColor": "#0f172a"
       },
       "package": "com.stellar.creatorportfolio",
-      "permissions": [
-        "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE"
-      ]
+      "permissions": ["READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE"]
     },
     "web": {
       "favicon": "./assets/favicon.png"
