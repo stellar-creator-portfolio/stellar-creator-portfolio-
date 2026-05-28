@@ -105,6 +105,15 @@ export type RootStackParamList = {
   MainTabs: undefined;
   Dashboard: { period?: AnalyticsPeriod };
   LanguageSettings: undefined;
+  // Issue #542 — Creator Native Profile
+  CreatorProfile: { creatorId: string };
+  // Issue #544 — Freelancer Directory
+  FreelancerDirectory: undefined;
+  FreelancerProfile: { creatorId: string };
+  // Issue #545 — Image Picker
+  ImagePicker: { maxImages?: number };
+  // Issue #543 — Deep-Linking (Messaging already existed)
+  Messaging: { conversationId: string; recipientName?: string };
   DetailsView: { itemId?: string };
   BiometricAuth: undefined;
 };

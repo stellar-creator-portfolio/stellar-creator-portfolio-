@@ -15,9 +15,11 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.stellar.creatorportfolio",
+      "associatedDomains": ["applinks:stellar.app", "applinks:www.stellar.app"],
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Stellar needs access to your photo library to upload portfolio images.",
         "NSCameraUsageDescription": "Stellar needs camera access to capture portfolio photos.",
+        "NSPhotoLibraryAddUsageDescription": "Stellar needs permission to save photos to your library."
         "NSFaceIDUsageDescription": "Stellar uses Face ID or Touch ID to securely authenticate portfolio access."
       }
     },
@@ -27,15 +29,43 @@
         "backgroundColor": "#0f172a"
       },
       "package": "com.stellar.creatorportfolio",
+      "permissions": [
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "CAMERA",
+        "READ_MEDIA_IMAGES"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "stellar.app",
+              "pathPrefix": "/"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
       "permissions": ["READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE"]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
+    "scheme": "stellar",
     "plugins": [
       "expo-localization",
       "@react-native-async-storage/async-storage",
       "expo-network",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Stellar needs access to your photo library to upload portfolio images.",
+          "cameraPermission": "Stellar needs camera access to capture portfolio photos."
+        }
+      ],
       [
         "expo-build-properties",
         {
