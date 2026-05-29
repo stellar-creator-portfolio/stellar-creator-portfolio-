@@ -122,6 +122,7 @@ export type RootStackParamList = {
   CreatorDirectory: undefined;
   // Auth gateway
   Login: undefined;
+  Register: undefined;
 };
 
 export type MainTabParamList = {

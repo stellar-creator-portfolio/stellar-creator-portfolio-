@@ -177,9 +177,12 @@ const btnStyles = StyleSheet.create({
 
 export function LoginScreen({
   onAuthenticated,
+  onRegister,
 }: {
   /** Called once the user is fully authenticated */
   onAuthenticated?: (publicKey: string) => void;
+  /** Navigate to registration flow */
+  onRegister?: () => void;
 }) {
   const { colors, isDark } = useTheme();
   const { status, session, error, connect, disconnect, resetError } = useWalletAuth();
@@ -297,6 +300,17 @@ export function LoginScreen({
         <Text style={[styles.legal, { color: colors.textTertiary }]}>
           By connecting, you agree to Stellar's Terms of Service. Your private key never leaves your wallet.
         </Text>
+
+        {onRegister && (
+          <Pressable onPress={onRegister} style={styles.registerLink}>
+            <Text style={[styles.registerText, { color: colors.textSecondary }]}>
+              New to Stellar?{" "}
+              <Text style={{ color: colors.primary, fontWeight: FontWeight.semibold }}>
+                Create an account
+              </Text>
+            </Text>
+          </Pressable>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -337,4 +351,6 @@ const styles = StyleSheet.create({
   walletName: { fontSize: FontSize.sm },
   actions: { gap: Spacing.sm },
   legal: { fontSize: FontSize.xs, textAlign: "center", lineHeight: 18 },
+  registerLink: { alignItems: "center", paddingVertical: Spacing.sm },
+  registerText: { fontSize: FontSize.sm },
 });
