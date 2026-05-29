@@ -6,6 +6,7 @@
  */
 
 import { getNetworkConfig } from "@/lib/config/network";
+import { rpcCall, startProbing } from "@/lib/config/rpc-fallback";
 
 export interface SimulateParams {
   contractId: string;
@@ -28,24 +29,17 @@ export interface SimulationResult {
 export async function simulateContractCall(
   params: SimulateParams
 ): Promise<SimulationResult> {
-  const { rpcUrl } = getNetworkConfig();
+  const { network } = getNetworkConfig();
+  startProbing(network);
 
-  const body = {
-    jsonrpc: "2.0",
-    id: 1,
-    method: "simulateTransaction",
-    params: {
-      transaction: buildTransactionEnvelope(params),
-    },
-  };
-
-  let response: Response;
+  let result: { result?: { cost?: { cpuInsns?: string }; error?: string } };
   try {
-    response = await fetch(rpcUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    const rpcResult = await rpcCall<{ cost?: { cpuInsns?: string }; error?: string }>(
+      network,
+      "simulateTransaction",
+      { transaction: buildTransactionEnvelope(params) },
+    );
+    result = { result: rpcResult.data };
   } catch (err) {
     return {
       success: false,
@@ -53,36 +47,15 @@ export async function simulateContractCall(
     };
   }
 
-  if (!response.ok) {
-    return {
-      success: false,
-      error: `RPC HTTP error ${response.status}: ${response.statusText}`,
-    };
-  }
+  const res = result.result;
+  if (!res) return { success: false, error: "Empty simulation result" };
+  if (res.error) return { success: false, error: res.error };
 
-  const json = (await response.json()) as {
-    result?: { cost?: { cpuInsns?: string }; error?: string };
-    error?: { message?: string };
-  };
-
-  if (json.error) {
-    return { success: false, error: json.error.message ?? "Unknown RPC error" };
-  }
-
-  const result = json.result;
-  if (!result) {
-    return { success: false, error: "Empty simulation result" };
-  }
-
-  if (result.error) {
-    return { success: false, error: result.error };
-  }
-
-  const gasEstimate = result.cost?.cpuInsns
-    ? parseInt(result.cost.cpuInsns, 10)
+  const gasEstimate = res.cost?.cpuInsns
+    ? parseInt(res.cost.cpuInsns, 10)
     : undefined;
 
-  return { success: true, gasEstimate, rawResult: result };
+  return { success: true, gasEstimate, rawResult: res };
 }
 
 /**

@@ -1,0 +1,216 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Stellar Platform – KMS Customer Managed Key and Secrets Manager resources
+  for production key management.  Deploys a CMK with automatic annual rotation,
+  a Secrets Manager secret for each platform secret, and a least-privilege IAM
+  role for the deployer.
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [production, staging]
+    Description: Deployment environment (affects resource naming and key policy).
+
+  SecretPrefix:
+    Type: String
+    Default: stellar/prod
+    Description: >
+      Prefix used for all Secrets Manager secret IDs.
+      Must match the KMS_SECRET_PREFIX environment variable consumed by kms.ts.
+
+  DeployerRoleArn:
+    Type: String
+    Description: ARN of the IAM role used by the CI/CD deployer (e.g. GitHub Actions OIDC role).
+
+  AdminRoleArn:
+    Type: String
+    Description: ARN of the IAM role for human administrators who manage key policy.
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  # ── CMK ──────────────────────────────────────────────────────────────────
+  PlatformKmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'Stellar Platform CMK – ${Environment}'
+      EnableKeyRotation: true          # Annual automatic rotation
+      MultiRegion: false
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          # Root account retains break-glass access.
+          - Sid: AllowRootAccount
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+
+          # Admins can manage the key (but not use it for data operations).
+          - Sid: AllowKeyAdministration
+            Effect: Allow
+            Principal:
+              AWS: !Ref AdminRoleArn
+            Action:
+              - kms:Create*
+              - kms:Describe*
+              - kms:Enable*
+              - kms:List*
+              - kms:Put*
+              - kms:Update*
+              - kms:Revoke*
+              - kms:Disable*
+              - kms:Get*
+              - kms:Delete*
+              - kms:ScheduleKeyDeletion
+              - kms:CancelKeyDeletion
+            Resource: '*'
+
+          # Deployer role can only use the key for Secrets Manager envelope encryption.
+          - Sid: AllowDeployerSecretsManagerUse
+            Effect: Allow
+            Principal:
+              AWS: !Ref DeployerRoleArn
+            Action:
+              - kms:GenerateDataKey
+              - kms:Decrypt
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'kms:ViaService': !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
+
+          # Secrets Manager service principal needs decrypt for secret rotation.
+          - Sid: AllowSecretsManagerService
+            Effect: Allow
+            Principal:
+              Service: secretsmanager.amazonaws.com
+            Action:
+              - kms:GenerateDataKey
+              - kms:Decrypt
+            Resource: '*'
+
+  PlatformKmsKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/stellar-platform-${Environment}'
+      TargetKeyId: !Ref PlatformKmsKey
+
+  # ── Secrets ──────────────────────────────────────────────────────────────
+  # Each secret is created empty; values are populated out-of-band via the
+  # AWS CLI or a one-time rotation Lambda.  The KMS key encrypts every secret.
+
+  SecretStellarAdminSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${SecretPrefix}/STELLAR_ADMIN_SECRET'
+      Description: Stellar network admin keypair secret seed
+      KmsKeyId: !Ref PlatformKmsKey
+
+  SecretJwtSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${SecretPrefix}/JWT_SECRET'
+      Description: JWT signing secret for the auth service
+      KmsKeyId: !Ref PlatformKmsKey
+
+  SecretEncryptionKey:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${SecretPrefix}/ENCRYPTION_KEY'
+      Description: 32-byte hex encryption key for at-rest data encryption
+      KmsKeyId: !Ref PlatformKmsKey
+
+  SecretStripeSecretKey:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${SecretPrefix}/STRIPE_SECRET_KEY'
+      Description: Stripe secret API key
+      KmsKeyId: !Ref PlatformKmsKey
+
+  SecretStripeWebhookSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${SecretPrefix}/STRIPE_WEBHOOK_SECRET'
+      Description: Stripe webhook signing secret
+      KmsKeyId: !Ref PlatformKmsKey
+
+  SecretNextAuthSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${SecretPrefix}/NEXTAUTH_SECRET'
+      Description: NextAuth.js session signing secret
+      KmsKeyId: !Ref PlatformKmsKey
+
+  SecretWebhookSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${SecretPrefix}/WEBHOOK_SECRET'
+      Description: Generic webhook HMAC signing secret
+      KmsKeyId: !Ref PlatformKmsKey
+
+  # ── Deployer IAM Role ─────────────────────────────────────────────────────
+  # Least-privilege policy: read secrets + use KMS key via Secrets Manager only.
+  DeployerSecretsPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub 'StellarPlatformDeployerSecrets-${Environment}'
+      Description: Allows the deployer to read platform secrets via Secrets Manager
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ReadSecrets
+            Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue
+              - secretsmanager:DescribeSecret
+            Resource:
+              - !Ref SecretStellarAdminSecret
+              - !Ref SecretJwtSecret
+              - !Ref SecretEncryptionKey
+              - !Ref SecretStripeSecretKey
+              - !Ref SecretStripeWebhookSecret
+              - !Ref SecretNextAuthSecret
+              - !Ref SecretWebhookSecret
+
+          - Sid: UseKmsViaSecretsManager
+            Effect: Allow
+            Action:
+              - kms:GenerateDataKey
+              - kms:Decrypt
+            Resource: !GetAtt PlatformKmsKey.Arn
+            Condition:
+              StringEquals:
+                'kms:ViaService': !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+  KmsKeyId:
+    Description: CMK Key ID
+    Value: !Ref PlatformKmsKey
+    Export:
+      Name: !Sub 'StellarPlatform-KmsKeyId-${Environment}'
+
+  KmsKeyArn:
+    Description: CMK Key ARN
+    Value: !GetAtt PlatformKmsKey.Arn
+    Export:
+      Name: !Sub 'StellarPlatform-KmsKeyArn-${Environment}'
+
+  KmsKeyAlias:
+    Description: CMK alias
+    Value: !Ref PlatformKmsKeyAlias
+
+  DeployerSecretsPolicyArn:
+    Description: ARN of the managed policy to attach to the deployer role
+    Value: !Ref DeployerSecretsPolicy
+    Export:
+      Name: !Sub 'StellarPlatform-DeployerSecretsPolicy-${Environment}'

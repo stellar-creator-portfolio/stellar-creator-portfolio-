@@ -50,3 +50,17 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Test Contracts
         run: cd backend && cargo test --all-features
+
+  reproducible-build:
+    name: Verify Reproducible Contract Hashes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build & verify hashes
+        run: ./scripts/verify.sh
+      - name: Upload WASM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: soroban-contracts-${{ github.sha }}
+          path: artifacts/
+          if-no-files-found: error
