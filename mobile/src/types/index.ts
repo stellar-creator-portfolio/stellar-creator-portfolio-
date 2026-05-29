@@ -117,6 +117,12 @@ export type RootStackParamList = {
   Messaging: { conversationId: string; recipientName?: string };
   DetailsView: { itemId?: string };
   BiometricAuth: undefined;
+  // Infinite scroll screens
+  BountyList: undefined;
+  CreatorDirectory: undefined;
+  // Auth gateway
+  Login: undefined;
+  Register: undefined;
 };
 
 export type MainTabParamList = {

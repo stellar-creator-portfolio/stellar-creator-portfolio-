@@ -12,6 +12,9 @@
       "backgroundColor": "#0f172a"
     },
     "assetBundlePatterns": ["**/*"],
+    "runtimeVersion": {
+      "policy": "sdkVersion"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.stellar.creatorportfolio",
@@ -19,7 +22,7 @@
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Stellar needs access to your photo library to upload portfolio images.",
         "NSCameraUsageDescription": "Stellar needs camera access to capture portfolio photos.",
-        "NSPhotoLibraryAddUsageDescription": "Stellar needs permission to save photos to your library."
+        "NSPhotoLibraryAddUsageDescription": "Stellar needs permission to save photos to your library.",
         "NSFaceIDUsageDescription": "Stellar uses Face ID or Touch ID to securely authenticate portfolio access."
       }
     },
@@ -32,7 +35,6 @@
       "permissions": [
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE",
-        "CAMERA"
         "CAMERA",
         "READ_MEDIA_IMAGES"
       ],
@@ -48,9 +50,18 @@
             }
           ],
           "category": ["BROWSABLE", "DEFAULT"]
+        },
+        {
+          "action": "VIEW",
+          "data": [
+            {
+              "scheme": "stellar",
+              "host": "wc"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
         }
       ]
-      "permissions": ["READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE"]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -72,7 +83,6 @@
         "expo-document-picker",
         {
           "iCloudContainerEnvironment": "Production"
-          "cameraPermission": "Stellar needs camera access to capture portfolio photos."
         }
       ],
       [
