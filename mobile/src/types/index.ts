@@ -1,192 +1,109 @@
-/**
- * Shared domain types for the Stellar mobile app.
- */
+// ─── Canvas / Collaboration ───────────────────────────────────────────────────
 
-// ─── Network / Offline ────────────────────────────────────────────────────────
+export interface Point {
+  x: number;
+  y: number;
+  pressure?: number;
+}
 
-export type NetworkState = "online" | "offline" | "unknown";
-
-export type SyncStatus = "synced" | "pending" | "syncing" | "error";
-
-export interface QueuedOperation {
+export interface VectorPath {
   id: string;
-  type: "create" | "update" | "delete";
-  endpoint: string;
-  payload: unknown;
-  retries: number;
-  createdAt: string;
+  userId: string;
+  color: string;
+  strokeWidth: number;
+  points: Point[];
+  closed: boolean;
+  timestamp: number;
 }
 
-// ─── Theme ────────────────────────────────────────────────────────────────────
-
-export type ThemeMode = "light" | "dark" | "system";
-
-export interface ThemeColors {
-  background: string;
-  surface: string;
-  surfaceElevated: string;
-  border: string;
-  borderStrong: string;
-  text: string;
-  textSecondary: string;
-  textTertiary: string;
-  textInverse: string;
-  placeholder: string;
+export interface CanvasState {
+  paths: Record<string, VectorPath>;
+  activePath: string | null;
+  collaborators: Record<string, CollaboratorCursor>;
 }
 
-// ─── Analytics / Dashboard ────────────────────────────────────────────────────
+export interface CollaboratorCursor {
+  userId: string;
+  displayName: string;
+  color: string;
+  point: Point;
+  lastSeen: number;
+}
 
-export type AnalyticsPeriod = "7d" | "30d" | "90d" | "all";
+// ─── Messaging / Encryption ───────────────────────────────────────────────────
 
-export interface MetricCard {
+export interface KeyBundle {
+  identityKey: Uint8Array;
+  signedPreKey: { keyId: number; publicKey: Uint8Array; signature: Uint8Array };
+  oneTimePreKeys: Array<{ keyId: number; publicKey: Uint8Array }>;
+}
+
+export interface EncryptedMessage {
   id: string;
-  label: string;
-  value: number;
-  previousValue: number;
-  unit: string;
-  trend: "up" | "down" | "flat";
-  trendPct: number;
+  senderId: string;
+  recipientId: string;
+  ciphertext: Uint8Array;
+  messageType: 1 | 3; // 1 = PreKeyWhisperMessage, 3 = WhisperMessage
+  timestamp: number;
 }
 
-export interface ChartDataPoint {
-  label: string; // x-axis label (date, week, etc.)
-  value: number;
-  secondaryValue?: number;
-}
-
-export interface DashboardData {
-  period: AnalyticsPeriod;
-  metrics: MetricCard[];
-  earningsChart: ChartDataPoint[];
-  bountiesChart: ChartDataPoint[];
-  topSkills: Array<{ skill: string; count: number }>;
-  recentActivity: Array<{
-    id: string;
-    label: string;
-    time: string;
-    type: string;
-  }>;
-}
-
-export interface PortfolioSummary {
+export interface DecryptedMessage {
   id: string;
-  title: string;
-  subtitle: string;
-  creator: string;
-  value: string;
-  followers: number;
-  change: number;
-  tags: string[];
+  senderId: string;
+  body: string;
+  timestamp: number;
 }
 
-export type ProjectBountyKind = "project" | "bounty";
-export type ProjectBountyStatus = "Live" | "Closing" | "Awarded";
-
-export interface ProjectBountyItem {
-  id: string;
-  kind: ProjectBountyKind;
-  title: string;
-  subtitle: string;
-  reward: string;
-  due: string;
-  status: ProjectBountyStatus;
-  tags: string[];
+export interface SessionRecord {
+  remoteUserId: string;
+  sessionData: string; // base64 serialised session
+  createdAt: number;
+  lastUsed: number;
 }
 
-export interface HomeData {
-  trendingPortfolios: PortfolioSummary[];
-  quickMetrics: MetricCard[];
-  projectBountyItems: ProjectBountyItem[];
+// ─── Upscaling ────────────────────────────────────────────────────────────────
+
+export interface UpscaleOptions {
+  scaleFactor: 2 | 4;
+  tileSize: number;   // pixels — controls peak memory
+  overlap: number;    // tile overlap to avoid seams
 }
 
-// ─── Navigation ───────────────────────────────────────────────────────────────
-
-export type RootStackParamList = {
-  MainTabs: undefined;
-  Dashboard: { period?: AnalyticsPeriod };
-  LanguageSettings: undefined;
-  PortfolioUpload: undefined;
-  // Issue #542 — Creator Native Profile
-  CreatorProfile: { creatorId: string };
-  // Issue #544 — Freelancer Directory
-  FreelancerDirectory: undefined;
-  FreelancerProfile: { creatorId: string };
-  // Issue #545 — Image Picker
-  ImagePicker: { maxImages?: number };
-  // Issue #543 — Deep-Linking (Messaging already existed)
-  Messaging: { conversationId: string; recipientName?: string };
-  DetailsView: { itemId?: string };
-  BiometricAuth: undefined;
-  // Infinite scroll screens
-  BountyList: undefined;
-  CreatorDirectory: undefined;
-  // Auth gateway
-  Login: undefined;
-  Register: undefined;
-};
-
-export type MainTabParamList = {
-  Home: undefined;
-  Activity: undefined;
-  Dashboard: undefined;
-  Profile: undefined;
-  Settings: undefined;
-};
-
-// ─── File Upload ──────────────────────────────────────────────────────────────
-
-export type UploadStatus =
-  | 'idle'
-  | 'pending'
-  | 'uploading'
-  | 'done'
-  | 'error'
-  | 'cancelled';
-
-export interface UploadFile {
-  /** Unique local ID */
-  id: string;
-  /** Display name */
-  name: string;
-  /** Local URI on device */
+export interface UpscaleResult {
   uri: string;
-  /** MIME type e.g. image/jpeg */
-  mimeType: string;
-  /** File size in bytes */
-  size: number;
-  /** 0-100 */
-  progress: number;
-  status: UploadStatus;
-  /** Remote URL after successful upload */
-  remoteUrl?: string;
-  /** Error message if status === 'error' */
-  error?: string;
-  /** Seconds elapsed for the upload */
-  elapsedSec?: number;
-  /** Upload start timestamp */
-  startedAt?: number;
+  originalWidth: number;
+  originalHeight: number;
+  outputWidth: number;
+  outputHeight: number;
+  processingMs: number;
+  peakMemoryMb: number;
 }
 
-export interface BucketUploadConfig {
-  /**
-   * Endpoint that returns a presigned URL for the given filename+mimeType.
-   * GET /api/upload/presign?filename=foo.jpg&mimeType=image%2Fjpeg
-   * Response: { url: string; publicUrl: string }
-   */
-  presignEndpoint: string;
-  /** Extra headers to send to YOUR server (auth tokens, etc.) */
-  authHeaders?: Record<string, string>;
-  /** Max concurrent uploads. Default 2. */
-  concurrency?: number;
-  /** Max retries per file. Default 3. */
-  maxRetries?: number;
-  /** Chunk size in bytes for multipart. Default 5 MB. */
-  chunkSize?: number;
+// ─── Media trimming ───────────────────────────────────────────────────────────
+
+export interface TrimRange {
+  startMs: number;
+  endMs: number;
 }
 
-export interface PresignResponse {
-  /** Presigned PUT URL pointing directly at the bucket */
-  url: string;
-  /** Public read URL of the uploaded file */
-  publicUrl: string;
+export interface TrimOptions {
+  inputUri: string;
+  range: TrimRange;
+  outputFormat: 'mp4' | 'mov';
+  hardwareEncoding: boolean;
+  videoBitrate?: number;  // kbps
+  audioBitrate?: number;  // kbps
+}
+
+export interface TrimResult {
+  outputUri: string;
+  durationMs: number;
+  fileSizeBytes: number;
+  processingMs: number;
+}
+
+export interface VideoFrame {
+  index: number;
+  timestampMs: number;
+  uri: string; // thumbnail URI
 }
