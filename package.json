@@ -25,7 +25,7 @@
   },
   "dependencies": {
     "@albedo-link/intent": "^0.13.0",
-    "@hookform/resolvers": "^3.9.1",
+    "@hookform/resolvers": "^5.4.0",
     "@prisma/client": "^5.0.0",
     "@radix-ui/react-accordion": "1.2.12",
     "@radix-ui/react-alert-dialog": "1.1.15",
