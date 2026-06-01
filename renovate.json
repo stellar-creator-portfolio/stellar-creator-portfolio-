@@ -1,0 +1,82 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":separatePatchReleases",
+    "group:monorepos",
+    "group:recommended"
+  ],
+  "timezone": "Africa/Lagos",
+  "schedule": ["every weekend"],
+  "prHourlyLimit": 5,
+  "prConcurrentLimit": 15,
+  "labels": ["dependencies"],
+  "assignees": ["yosemite01"],
+  "reviewers": ["yosemite01"],
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "automerge": true
+  },
+  "packageRules": [
+    {
+      "description": "Auto-merge patch and minor dev dependency updates",
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Auto-merge patch updates for production deps",
+      "matchDepTypes": ["dependencies"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Wait 3 days before bumping to avoid bad releases",
+      "matchUpdateTypes": ["minor", "patch"],
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "Group all Stellar SDK packages",
+      "matchPackagePatterns": ["^@stellar/", "^stellar-"],
+      "groupName": "Stellar SDK"
+    },
+    {
+      "description": "Group all Radix UI packages",
+      "matchPackagePatterns": ["^@radix-ui/"],
+      "groupName": "Radix UI"
+    },
+    {
+      "description": "Group all React Native / Expo packages",
+      "matchPackagePatterns": ["^react-native", "^expo", "^@expo/"],
+      "groupName": "React Native & Expo"
+    },
+    {
+      "description": "Group TypeScript ESLint",
+      "matchPackagePatterns": ["^@typescript-eslint/"],
+      "groupName": "TypeScript ESLint"
+    },
+    {
+      "description": "Group testing tools",
+      "matchPackageNames": ["vitest", "jest", "playwright"],
+      "matchPackagePatterns": ["^@vitest/", "^@jest/", "^@playwright/"],
+      "groupName": "Testing"
+    },
+    {
+      "description": "Pin GitHub Actions to exact digest for security",
+      "matchManagers": ["github-actions"],
+      "pinDigests": true
+    },
+    {
+      "description": "Require manual review for major version bumps",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "labels": ["dependencies", "major-update"]
+    }
+  ]
+}
