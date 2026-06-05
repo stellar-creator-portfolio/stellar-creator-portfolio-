@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { RichTextEditor } from '@/components/ui/rich-text';
 import { Button } from '@/components/ui/button';
+import { trpc } from '@/lib/trpc-client';
 
 interface ProjectFormData {
   title: string;
@@ -25,7 +26,33 @@ export function ProjectCreateForm({ onSubmit, onCancel }: ProjectCreateFormProps
   const [tags, setTags] = useState('');
   const [year, setYear] = useState(new Date().getFullYear());
   const [link, setLink] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+
+  // Use tRPC mutation for project creation
+  const createProjectMutation = trpc.projects.create.useMutation({
+    onSuccess: async (data) => {
+      // Call parent onSubmit with the form data
+      await onSubmit({
+        title: title.trim(),
+        category: category.trim(),
+        description,
+        tags: tags.trim(),
+        year,
+        link: link.trim() || undefined,
+      });
+      
+      // Reset form
+      setTitle('');
+      setCategory('');
+      setDescription('');
+      setTags('');
+      setYear(new Date().getFullYear());
+      setLink('');
+    },
+    onError: (error) => {
+      console.error('Project creation failed:', error);
+    },
+  });
+
   const [error, setError] = useState<string | null>(null);
 
   const isValid = title.trim().length > 0 && category.trim().length > 0 && description.trim().length > 0;
@@ -33,16 +60,25 @@ export function ProjectCreateForm({ onSubmit, onCancel }: ProjectCreateFormProps
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isValid) return;
-    setSubmitting(true);
+    
     setError(null);
+    
     try {
-      await onSubmit({ title: title.trim(), category: category.trim(), description, tags: tags.trim(), year, link: link.trim() || undefined });
+      // Submit via tRPC
+      await createProjectMutation.mutateAsync({
+        title: title.trim(),
+        category: category.trim(),
+        description,
+        tags: tags.trim().split(',').map(t => t.trim()).filter(Boolean),
+        year,
+        link: link.trim() || undefined,
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save project.');
-    } finally {
-      setSubmitting(false);
+      setError(err instanceof Error ? err.message : 'Failed to create project.');
     }
   };
+
+  const submitting = createProjectMutation.isLoading;
 
   const field = (label: string, required: boolean, children: React.ReactNode) => (
     <div>
@@ -93,7 +129,7 @@ export function ProjectCreateForm({ onSubmit, onCancel }: ProjectCreateFormProps
           <Button type="button" variant="outline" onClick={onCancel} disabled={submitting}>Cancel</Button>
         )}
         <Button type="submit" disabled={!isValid || submitting}>
-          {submitting ? 'Saving...' : 'Save Project'}
+          {submitting ? 'Creating...' : 'Create Project'}
         </Button>
       </div>
     </form>

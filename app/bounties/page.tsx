@@ -4,11 +4,11 @@ import { Footer } from '@/components/footer';
 import { BountiesPageSkeleton } from '@/components/ui/skeleton-group';
 import { BountiesStatsSection } from '@/components/streaming/bounties-stats-section';
 import { fetchBountiesList } from '@/lib/streaming/chunk-data';
-import BountiesClient from './BountiesClient';
+import BountiesWithProvider from './BountiesWithProvider';
 
 async function BountiesListSection() {
   const bounties = await fetchBountiesList();
-  return <BountiesClient bounties={bounties} />;
+  return <BountiesWithProvider bounties={bounties} />;
 }
 
 export default function BountiesPage() {

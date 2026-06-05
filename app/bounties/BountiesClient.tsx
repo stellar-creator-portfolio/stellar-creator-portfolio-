@@ -2,14 +2,10 @@
 
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { submitEscrowTransaction } from '@/lib/api-client';
+import { trpc } from '@/lib/trpc-client';
 import type { Bounty } from '@/lib/creators-data';
 
 const DIFFICULTIES = ['beginner', 'intermediate', 'advanced', 'expert'] as const;
-
-function getCategories(bounties: Bounty[]) {
-  return Array.from(new Set(bounties.map((b) => b.category)));
-}
 
 interface ApplyModalProps {
   bounty: Bounty;
@@ -21,7 +17,17 @@ function ApplyModal({ bounty, onClose }: ApplyModalProps) {
   const [budget, setBudget] = useState(bounty.budget);
   const [timeline, setTimeline] = useState(14);
   const [proposal, setProposal] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+  
+  // Use tRPC mutation for escrow creation
+  const createEscrowMutation = trpc.escrow.create.useMutation({
+    onSuccess: (data) => {
+      setSuccess({ txHash: data.txHash, escrowId: data.escrowId });
+    },
+    onError: (error) => {
+      setError(error.message);
+    },
+  });
+
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<{ txHash: string; escrowId: string } | null>(null);
 
@@ -30,21 +36,17 @@ function ApplyModal({ bounty, onClose }: ApplyModalProps) {
     setError(null);
     if (!proposal.trim()) { setError('Proposal is required.'); return; }
     if (budget <= 0) { setError('Budget must be positive.'); return; }
-    setSubmitting(true);
-    try {
-      const result = await submitEscrowTransaction({
-        bountyId: bounty.id,
-        operation: 'deposit',
-        payerAddress: walletAddress,
-        amount: budget,
-      });
-      setSuccess({ txHash: result.txHash, escrowId: result.escrowId });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Submission failed.');
-    } finally {
-      setSubmitting(false);
-    }
+    
+    createEscrowMutation.mutate({
+      bountyId: bounty.id,
+      payerAddress: walletAddress,
+      payeeAddress: 'PAYEE_ADDRESS_PLACEHOLDER', // Replace with actual payee
+      amount: budget,
+      token: 'USDC', // Default token
+    });
   };
+
+  const submitting = createEscrowMutation.isLoading;
 
   const inputCls = 'w-full px-3 py-2 text-sm bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-primary';
 
@@ -112,9 +114,15 @@ export default function BountiesClient({ bounties }: { bounties: Bounty[] }) {
   const [category, setCategory] = useState<string | null>(null);
   const [activeBounty, setActiveBounty] = useState<Bounty | null>(null);
 
-  const categories = getCategories(bounties);
+  // Use tRPC query for bounties
+  const bountiesQuery = trpc.bounties.list.useQuery({
+    take: 50,
+    status: difficulty ? (difficulty as any) : undefined,
+  });
 
-  const filtered = bounties.filter((b) => {
+  const categories = Array.from(new Set((bountiesQuery.data?.bounties || bounties).map((b) => b.category)));
+  
+  const filtered = (bountiesQuery.data?.bounties || bounties).filter((b) => {
     if (difficulty && b.difficulty !== difficulty) return false;
     if (category && b.category !== category) return false;
     return true;

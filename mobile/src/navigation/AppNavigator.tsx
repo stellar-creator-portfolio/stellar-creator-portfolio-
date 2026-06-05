@@ -23,8 +23,8 @@ import {
   DefaultTheme,
   DarkTheme,
 } from "@react-navigation/native";
-import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import { createNativeStackNavigator, NativeStackScreenProps } from "@react-navigation/native-stack";
+import { createBottomTabNavigator, BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 
 import { DashboardScreen } from "../screens/DashboardScreen";
 import { ThemeSettingsScreen } from "../screens/ThemeSettingsScreen";
@@ -32,12 +32,14 @@ import { PortfolioUploadScreen } from "../screens/PortfolioUploadScreen";
 import { HomeScreen } from "../screens/HomeScreen";
 import { BiometricAuthScreen } from "../screens/BiometricAuthScreen";
 import { CreatorProfileScreen } from "../screens/CreatorProfileScreen";
+import { CreatorProfileScreenConnected } from "../screens/CreatorProfileScreenConnected";
 import { FreelancerDirectoryScreen } from "../screens/FreelancerDirectoryScreen";
 import { ImagePickerScreen } from "../screens/ImagePickerScreen";
 import { ImageEditorScreen } from "../screens/ImageEditorScreen";
 import { MessagingScreen } from "../screens/MessagingScreen";
 import { ProfileScreen } from "../screens/ProfileScreen";
 import { DetailsView } from "../screens/DetailsView";
+import { ActivityScreen } from "../screens/ActivityScreen";
 import { useTheme } from "../theme/ThemeProvider";
 import { ScreenTransitions, GestureConfig } from "./transitions";
 import { RootStackParamList, MainTabParamList } from "../types";
@@ -87,7 +89,7 @@ function MainTabs() {
         name="Home"
         options={{
           title: "Home",
-          tabBarIcon: ({ color }) => (
+          tabBarIcon: ({ color }: { color: string }) => (
             <Text style={{ fontSize: 20, color }}>🏠</Text>
           ),
         }}
@@ -99,19 +101,19 @@ function MainTabs() {
         name="Activity"
         options={{
           title: "Activity",
-          tabBarIcon: ({ color }) => (
+          tabBarIcon: ({ color }: { color: string }) => (
             <Text style={{ fontSize: 20, color }}>⚡</Text>
           ),
         }}
       >
-        {() => <Placeholder name="Activity" />}
+        {() => <ActivityScreen />}
       </Tab.Screen>
 
       <Tab.Screen
         name="Dashboard"
         options={{
           title: "Dashboard",
-          tabBarIcon: ({ color }) => (
+          tabBarIcon: ({ color }: { color: string }) => (
             <Text style={{ fontSize: 20, color }}>📊</Text>
           ),
         }}
@@ -123,7 +125,7 @@ function MainTabs() {
         name="Profile"
         options={{
           title: "Profile",
-          tabBarIcon: ({ color }) => (
+          tabBarIcon: ({ color }: { color: string }) => (
             <Text style={{ fontSize: 20, color }}>👤</Text>
           ),
         }}
@@ -135,7 +137,7 @@ function MainTabs() {
         name="Settings"
         options={{
           title: "Settings",
-          tabBarIcon: ({ color }) => (
+          tabBarIcon: ({ color }: { color: string }) => (
             <Text style={{ fontSize: 20, color }}>⚙️</Text>
           ),
         }}
@@ -201,7 +203,7 @@ export function AppNavigator() {
           name="DetailsView"
           options={{ animation: ScreenTransitions.Dashboard }}
         >
-          {({ navigation }) => (
+          {({ navigation }: NativeStackScreenProps<RootStackParamList, 'DetailsView'>) => (
             <DetailsView onBack={() => navigation.goBack()} />
           )}
         </Stack.Screen>
@@ -209,7 +211,7 @@ export function AppNavigator() {
           name="LanguageSettings"
           options={{ animation: ScreenTransitions.LanguageSettings }}
         >
-          {({ navigation }) => (
+          {({ navigation }: NativeStackScreenProps<RootStackParamList, 'LanguageSettings'>) => (
             <ThemeSettingsScreen onBack={() => navigation.goBack()} />
           )}
         </Stack.Screen>
@@ -224,9 +226,9 @@ export function AppNavigator() {
           name="CreatorProfile"
           options={{ animation: "slide_from_right" }}
         >
-          {({ route, navigation }) => (
+          {({ route, navigation }: NativeStackScreenProps<RootStackParamList, 'CreatorProfile'>) => (
             <CreatorProfileScreen
-              creatorId={(route.params as any)?.creatorId}
+              creatorId={route.params?.creatorId}
               onBack={() => navigation.goBack()}
               onMessage={(id) =>
                 navigation.navigate("Messaging", {
@@ -243,7 +245,7 @@ export function AppNavigator() {
           name="FreelancerDirectory"
           options={{ animation: "slide_from_right" }}
         >
-          {({ navigation }) => (
+          {({ navigation }: NativeStackScreenProps<RootStackParamList, 'FreelancerDirectory'>) => (
             <FreelancerDirectoryScreen
               onBack={() => navigation.goBack()}
               onSelectFreelancer={(id) =>
@@ -257,9 +259,9 @@ export function AppNavigator() {
           name="FreelancerProfile"
           options={{ animation: "slide_from_right" }}
         >
-          {({ route, navigation }) => (
+          {({ route, navigation }: NativeStackScreenProps<RootStackParamList, 'FreelancerProfile'>) => (
             <CreatorProfileScreen
-              creatorId={(route.params as any)?.creatorId}
+              creatorId={route.params?.creatorId}
               onBack={() => navigation.goBack()}
               onMessage={(id) =>
                 navigation.navigate("Messaging", {
@@ -276,9 +278,9 @@ export function AppNavigator() {
           name="ImagePicker"
           options={{ animation: "slide_from_bottom" }}
         >
-          {({ route, navigation }) => (
+          {({ route, navigation }: NativeStackScreenProps<RootStackParamList, 'ImagePicker'>) => (
             <ImagePickerScreen
-              maxImages={(route.params as any)?.maxImages ?? 10}
+              maxImages={route.params?.maxImages ?? 10}
               onBack={() => navigation.goBack()}
               onUploadComplete={() => navigation.goBack()}
             />
@@ -290,13 +292,13 @@ export function AppNavigator() {
           name="ImageEditor"
           options={{ animation: "slide_from_bottom" }}
         >
-          {({ route, navigation }) => (
+          {({ route, navigation }: NativeStackScreenProps<RootStackParamList, 'ImageEditor'>) => (
             <ImageEditorScreen
-              imageUri={(route.params as any)?.imageUri}
-              imageWidth={(route.params as any)?.imageWidth}
-              imageHeight={(route.params as any)?.imageHeight}
-              fileSize={(route.params as any)?.fileSize}
-              mode={(route.params as any)?.mode ?? "avatar"}
+              imageUri={route.params?.imageUri}
+              imageWidth={route.params?.imageWidth}
+              imageHeight={route.params?.imageHeight}
+              fileSize={route.params?.fileSize}
+              mode={route.params?.mode ?? "avatar"}
               onBack={() => navigation.goBack()}
               onComplete={() => navigation.goBack()}
             />
@@ -308,13 +310,13 @@ export function AppNavigator() {
           name="Messaging"
           options={{ animation: "slide_from_right" }}
         >
-          {({ route, navigation }) => (
+          {({ route, navigation }: NativeStackScreenProps<RootStackParamList, 'Messaging'>) => (
             <MessagingScreen
               conversationId={
-                (route.params as any)?.conversationId ?? "default"
+                route.params?.conversationId ?? "default"
               }
               currentUserId="user-1"
-              recipientName={(route.params as any)?.recipientName ?? "User"}
+              recipientName={route.params?.recipientName ?? "User"}
               onBack={() => navigation.goBack()}
             />
           )}

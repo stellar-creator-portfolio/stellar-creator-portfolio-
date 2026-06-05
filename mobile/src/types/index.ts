@@ -1,3 +1,28 @@
+// ─── Navigation Types ──────────────────────────────────────────────────────────
+
+export type RootStackParamList = {
+  MainTabs: undefined;
+  Dashboard: undefined;
+  DetailsView: undefined;
+  LanguageSettings: undefined;
+  PortfolioUpload: undefined;
+  CreatorProfile: { creatorId: string };
+  FreelancerDirectory: undefined;
+  FreelancerProfile: { creatorId: string };
+  ImagePicker: { maxImages?: number };
+  ImageEditor: { imageUri: string; imageWidth?: number; imageHeight?: number; fileSize?: number; mode?: string };
+  Messaging: { conversationId?: string; recipientName?: string };
+  BiometricAuth: undefined;
+};
+
+export type MainTabParamList = {
+  Home: undefined;
+  Activity: undefined;
+  Dashboard: undefined;
+  Profile: undefined;
+  Settings: undefined;
+};
+
 // ─── Canvas / Collaboration ───────────────────────────────────────────────────
 
 export interface Point {

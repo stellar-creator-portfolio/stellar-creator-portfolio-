@@ -1,66 +1,110 @@
-import { initTRPC, TRPCError } from '@trpc/server';
-import { getServerSession } from 'next-auth/next';
-import type { Session } from 'next-auth';
+/**
+ * tRPC Server Setup with Authentication and Tracing
+ * 
+ * Provides type-safe procedures with automatic context injection,
+ * authentication middleware, and distributed tracing integration.
+ */
+
+import { TRPCError, initTRPC } from '@trpc/server';
+import { NextRequest } from 'next/server';
+import { prisma } from '@/lib/prisma';
 import { tracingMiddleware } from '@/backend/services/tracing';
+import jwt from 'jsonwebtoken';
 
-// Context provides authenticated user from NextAuth session
-// Protected procedures reject unauthenticated requests with UNAUTHORIZED error
-type CreateContextOptions = {
-  session: Session | null;
-  /** Request headers forwarded so tracing middleware can extract traceparent */
+// ─── Context Creation ─────────────────────────────────────────────────────────
+
+interface User {
+  id: string;
+  email: string;
+  name: string;
+}
+
+interface Context {
+  req: NextRequest;
   headers?: Headers;
-};
+  user?: User;
+  prisma: typeof prisma;
+}
 
-export async function createContext(opts?: CreateContextOptions): Promise<CreateContextOptions> {
-  // If opts is provided (e.g., in tests), use it directly
-  // Otherwise, try to get the session from NextAuth (in request context)
-  let session = opts?.session ?? null;
-  if (session === null && !opts) {
+export async function createContext(req: NextRequest): Promise<Context> {
+  const headers = req.headers;
+  
+  // Extract user from auth token if present
+  let user: User | undefined;
+  const authorization = headers.get('authorization');
+  
+  if (authorization?.startsWith('Bearer ')) {
+    const token = authorization.slice(7);
     try {
-      session = await getServerSession();
-    } catch {
-      // If getServerSession fails (e.g., outside request context), leave session as null
-      session = null;
+      const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key';
+      const decoded = jwt.verify(token, JWT_SECRET) as any;
+      
+      // Fetch user from database
+      const dbUser = await prisma.user.findUnique({
+        where: { id: decoded.userId },
+        select: { id: true, email: true, name: true },
+      });
+      
+      if (dbUser) {
+        user = dbUser;
+      }
+    } catch (error) {
+      // Invalid token - user stays undefined
+      console.warn('Invalid JWT token:', error);
     }
   }
+
   return {
-    session,
+    req,
+    headers,
+    user,
+    prisma,
   };
 }
 
-type Context = Awaited<ReturnType<typeof createContext>>;
+// ─── tRPC Initialization ──────────────────────────────────────────────────────
 
-const t = initTRPC.context<Context>().create();
-
-// ── OpenTelemetry tracing middleware ─────────────────────────────────────────
-// Wraps every procedure with a root span that propagates the W3C traceparent
-const otelTracingMiddleware = t.middleware((opts) =>
-  tracingMiddleware({
-    ctx: opts.ctx as Context & { headers?: Headers },
-    next: opts.next as () => Promise<unknown>,
-    path: opts.path,
-    type: opts.type,
+const t = initTRPC.context<Context>().create({
+  errorFormatter: ({ shape, error }) => ({
+    ...shape,
+    data: {
+      ...shape.data,
+      zodError: 
+        error.cause instanceof Error && error.cause.name === 'ZodError'
+          ? error.cause.flatten()
+          : null,
+    },
   }),
-);
+});
 
-// Public procedure accessible without auth
-export const publicProcedure = t.procedure.use(otelTracingMiddleware);
+// ─── Middleware ───────────────────────────────────────────────────────────────
 
-// Protected procedure that rejects unauthenticated requests
-export const protectedProcedure = t.procedure.use(otelTracingMiddleware).use(({ ctx, next }) => {
-  if (!ctx.session?.user) {
+const tracingMw = t.middleware(({ next, path, type, ctx }) => {
+  return tracingMiddleware({
+    ctx: { headers: ctx.headers },
+    next,
+    path,
+    type,
+  });
+});
+
+const authMiddleware = t.middleware(({ ctx, next }) => {
+  if (!ctx.user) {
     throw new TRPCError({
       code: 'UNAUTHORIZED',
-      message: 'Authentication required for this operation',
+      message: 'Authentication required',
     });
   }
   return next({
     ctx: {
-      session: ctx.session,
-      user: ctx.session.user,
+      ...ctx,
+      user: ctx.user,
     },
   });
 });
 
+// ─── Base Procedures ──────────────────────────────────────────────────────────
+
 export const router = t.router;
-export const middleware = t.middleware;
+export const publicProcedure = t.procedure.use(tracingMw);
+export const protectedProcedure = t.procedure.use(tracingMw).use(authMiddleware);

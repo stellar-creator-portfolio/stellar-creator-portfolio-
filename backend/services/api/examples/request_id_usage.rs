@@ -2,7 +2,7 @@
 /// 
 /// Run with: cargo run --example request_id_usage
 
-use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer, middleware};
+use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer, middleware as actix_middleware};
 use serde_json::json;
 
 // Simulated middleware module (in real code, use: use stellar_api::middleware::*)
@@ -187,7 +187,7 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(|| {
         App::new()
             // In real code, add: .wrap(RequestId)
-            .wrap(middleware::Logger::default())
+            .wrap(actix_middleware::Logger::default())
             .route("/basic", web::get().to(basic_handler))
             .route("/error", web::get().to(error_handler))
             .route("/async", web::get().to(async_operation_handler))
