@@ -46,7 +46,7 @@ hmac = { version = "0.12", features = ["std"] }
 hex = "0.4"
 
 # Auth
-jsonwebtoken = "9"
+jsonwebtoken = "10"
 actix-web-httpauth = "0.8"
 
 # Utilities
