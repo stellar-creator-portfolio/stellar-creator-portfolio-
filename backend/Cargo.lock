@@ -3654,7 +3654,7 @@ dependencies = [
  "sha2",
  "soroban-sdk 21.7.7",
  "sqlx",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite",
  "tracing",
@@ -3678,7 +3678,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "totp-lite",
  "tracing",
@@ -3708,7 +3708,7 @@ name = "stellar-bounty-contract"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk 21.7.7",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -3724,7 +3724,7 @@ name = "stellar-escrow-contract"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk 21.7.7",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -3732,7 +3732,7 @@ name = "stellar-freelancer-contract"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk 21.7.7",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -3740,7 +3740,7 @@ name = "stellar-governance-contract"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk 21.7.7",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

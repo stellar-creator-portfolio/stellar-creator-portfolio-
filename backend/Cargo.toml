@@ -50,7 +50,7 @@ jsonwebtoken = "9"
 actix-web-httpauth = "0.8"
 
 # Utilities
-thiserror = "1.0"
+thiserror = "2.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1.0"
