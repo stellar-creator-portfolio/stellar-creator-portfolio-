@@ -30,7 +30,7 @@ import {
   Asset,
   BASE_FEE,
 } from "@stellar/stellar-sdk";
-import { execSync } from "child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync } from "fs";
 import path from "path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -46,9 +46,7 @@ const FRIENDBOT_URL = "https://friendbot.stellar.org";
 
 const BOUNTY_AMOUNT_XLM = "10"; // XLM
 const BOUNTY_AMOUNT_STROOPS = 10_000_000n; // 10 XLM
-const PLATFORM_FEE_BPS = 250n; // 2.5%
 const PLATFORM_FEE_XLM = "0.25";
-const PLATFORM_FEE_STROOPS = 250_000n;
 const FREELANCER_PAYOUT_XLM = "9.75";
 const FREELANCER_PAYOUT_STROOPS = 9_750_000n;
 const FEE_ACCOUNT_PUBLIC = "GBZXN7PJRXOP2KJH6P7X2Y5GXJ3Y5XKJ5VY5X5KJ5VY5X5KJ5VY5"; // placeholder fee collector
@@ -78,7 +76,7 @@ const txRecords: TxRecord[] = [];
 // ---------------------------------------------------------------------------
 
 function stellar(...args: string[]): string {
-  return execSync(`stellar ${args.join(" ")}`, {
+  return execFileSync("stellar", args, {
     encoding: "utf-8",
     maxBuffer: 10 * 1024 * 1024,
   }).trim();
@@ -201,34 +199,6 @@ async function invokeContract(
     await new Promise((r) => setTimeout(r, 1000));
   }
   throw new Error(`Tx ${txHash} for ${method} timed out`);
-}
-
-/** Read-only contract call via simulation (no submission). */
-async function simulateView<T>(
-  contractId: string,
-  method: string,
-  args: any[],
-): Promise<T> {
-  const contract = new Contract(contractId);
-  const call = contract.call(method, ...args.map(toScVal));
-
-  // Use a dummy account for the simulation
-  const dummy = Keypair.random();
-  const tx = new TransactionBuilder(
-    new Account(dummy.publicKey(), "0"),
-    { fee: "100", networkPassphrase: NETWORK_PASSPHRASE },
-  )
-    .addOperation(call)
-    .setTimeout(TimeoutInfinite)
-    .build();
-
-  const result = await rpcServer.simulateTransaction(tx);
-  if (rpc.Api.isSimulationError(result) || !result.result) {
-    throw new Error(
-      `View call ${method} failed: ${JSON.stringify((result as any).error ?? "no result")}`,
-    );
-  }
-  return scValToNative(result.result.retval as any) as T;
 }
 
 // ---------------------------------------------------------------------------
