@@ -20,7 +20,6 @@ import {
   Contract,
   TimeoutInfinite,
   nativeToScVal,
-  xdr,
   rpc,
 } from "@stellar/stellar-sdk";
 import { stellarClient } from "@/services/api/stellar/client";
