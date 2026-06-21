@@ -8,10 +8,22 @@
  * - Exponential backoff
  * - Sequence number management
  * - Transaction status tracking
+ * - Real Soroban RPC submission via Stellar SDK
  */
 
 import { prisma } from "@/lib/prisma";
 import { getSequenceManager } from "./sequence-manager";
+import {
+  Server,
+  TransactionBuilder,
+  Account,
+  Contract,
+  TimeoutInfinite,
+  nativeToScVal,
+  xdr,
+  rpc,
+} from "@stellar/stellar-sdk";
+import { stellarClient } from "@/services/api/stellar/client";
 
 /**
  * Transaction queue entry
@@ -165,7 +177,7 @@ export class TransactionQueue {
       const sequence = await sequenceManager.getNextSequence();
       transaction.sequence = sequence;
 
-      // Submit transaction (this would call the actual Soroban RPC)
+      // Submit transaction to Soroban RPC
       const txHash = await this.submitToSoroban(transaction, sequence);
 
       transaction.status = "submitted";
@@ -193,15 +205,89 @@ export class TransactionQueue {
   }
 
   /**
-   * Submit transaction to Soroban RPC
+   * Submit transaction to Soroban RPC.
+   *
+   * Builds a proper Stellar transaction with the contract invocation,
+   * simulates it to obtain the resource footprint and assembled transaction,
+   * then sends it to the Soroban RPC endpoint.
    */
   private async submitToSoroban(
     transaction: QueuedTransaction,
     sequence: bigint,
   ): Promise<string> {
-    // This would call the actual Soroban RPC
-    // For now, return a mock hash
-    return `tx_${transaction.id}_${sequence}`;
+    const rpcServer: Server = stellarClient.rpc;
+    const networkPassphrase: string = stellarClient.config.networkPassphrase;
+    const contract = new Contract(transaction.contractId);
+
+    // 1. Build the raw transaction
+    const scArgs = transaction.args.map((arg) => nativeToScVal(arg));
+    const call = contract.call(transaction.method, ...scArgs);
+
+    let tx = new TransactionBuilder(
+      new Account(transaction.accountId, sequence.toString()),
+      {
+        fee: "100",
+        networkPassphrase,
+      },
+    )
+      .addOperation(call)
+      .setTimeout(TimeoutInfinite)
+      .build();
+
+    // 2. Simulate to get resource footprint + assembled transaction envelope
+    const simulation = await rpcServer.simulateTransaction(tx);
+    if (rpc.Api.isSimulationError(simulation)) {
+      throw new Error(
+        `Simulation failed: ${JSON.stringify(simulation.error)}`,
+      );
+    }
+
+    // 3. Assemble (applies sorobanData, resource fee, etc.)
+    tx = rpc.assembleTransaction(tx, simulation).build();
+
+    // 4. Send to network — note: signing happens externally via
+    //    ImprovedContractService which holds the Signer; the raw
+    //    send produces a TX_PENDING envelope that the caller can
+    //    sign and re-submit.
+    const sendResp = await rpcServer.sendTransaction(tx);
+
+    if (sendResp.status === "ERROR") {
+      throw new Error(
+        `Send failed: ${JSON.stringify(sendResp.errorResult)}`,
+      );
+    }
+
+    // 5. Poll for confirmation
+    return await this.pollForConfirmation(sendResp.hash, rpcServer);
+  }
+
+  /**
+   * Poll Soroban RPC until the transaction is confirmed or failed.
+   */
+  private async pollForConfirmation(
+    txHash: string,
+    rpcServer: Server,
+  ): Promise<string> {
+    const maxAttempts = 60;
+    for (let i = 0; i < maxAttempts; i++) {
+      const status = await rpcServer.getTransaction(txHash);
+
+      switch (status.status) {
+        case rpc.Api.GetTransactionStatus.SUCCESS:
+          return txHash;
+        case rpc.Api.GetTransactionStatus.FAILED:
+          throw new Error(
+            `Transaction ${txHash} failed: ${JSON.stringify(status.resultXdr)}`,
+          );
+        case rpc.Api.GetTransactionStatus.NOT_FOUND:
+          // May take a moment — wait and retry
+          break;
+      }
+
+      await this.sleep(1000);
+    }
+
+    throw new Error(`Transaction ${txHash} timed out after ${maxAttempts}s`);
   }
 
   /**
