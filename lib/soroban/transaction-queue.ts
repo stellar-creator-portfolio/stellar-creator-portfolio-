@@ -1,71 +1,153 @@
-import { SorobanRpc } from '@stellar/stellar-sdk';
+import { SorobanRpc, TransactionBuilder, Account } from '@stellar/stellar-sdk';
 import { RpcFallbackManager } from '../config/rpc-fallback';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-export interface SorobanSubmitFn {
-  (transaction: any): Promise<any>;
+
+export interface SorobanTransaction {
+  fee: string;
+  operation: any;
+  timeout: number;
+  secretKey: string;
+}
+
+export interface SubmissionResult {
+  success: boolean;
+  txHash: string;
+  ledger?: number;
 }
 
 export class TransactionQueue {
-  private submitFn: SorobanSubmitFn;
   private rpcFallbackManager: RpcFallbackManager;
+ 
+  private sequenceManager: any; 
 
-  constructor(submitFn: SorobanSubmitFn) {
-    this.submitFn = submitFn;
+  constructor(sequenceManager: any) {
     this.rpcFallbackManager = new RpcFallbackManager();
+    this.sequenceManager = sequenceManager;
   }
 
-  async submitToSoroban(transaction: any): Promise<any> {
-    const txHash = await this.rpcFallbackManager.execute(async (endpoint) => {
-      const response = await this.submitFn(transaction);
-      return response;
-    });
+  async submitToSoroban(
+    tx: SorobanTransaction,
+    account: string,
+    networkPassphrase: string
+  ): Promise<SubmissionResult> {
+ 
+    let txHash: string | undefined;
 
-    // Polling for transaction status
-    const result = await this.pollTransaction(txHash);
-    if (result.status === 'SUCCESS') {
-      await prisma.sorobanTransaction.create({
-        data: {
-          txHash: txHash,
-          sequence: transaction.sequence,
-          error: null
+    try {
+      const sequence = await this.sequenceManager.getNextSequence(account);
+      const preparedTx = new TransactionBuilder(
+        new Account(account, sequence),
+        {
+          fee: tx.fee,
+          networkPassphrase,
         }
-      });
-      return result;
-    } else {
-      await prisma.sorobanTransaction.create({
+      )
+        .addOperation(tx.operation)
+        .setTimeout(tx.timeout)
+        .build();
+
+      const signedTx = preparedTx.sign(tx.secretKey);
+      txHash = signedTx.hash().toString('hex');
+
+    
+      await prisma.transactionQueue.create({
         data: {
-          txHash: txHash,
-          sequence: transaction.sequence,
-          error: result.error
-        }
+          txHash,
+          account,
+          sequence,
+          status: 'PENDING',
+          xdr: signedTx.toXDR(),
+          createdAt: new Date(),
+        },
       });
-      throw new Error(result.error);
-    }
-  }
 
-  private async pollTransaction(txHash: string): Promise<any> {
-    const maxRetries = 12;
-    const intervals = [500, 500, 500];
-    let retryCount = 0;
+     
+      const rpcServer = this.rpcFallbackManager.getCurrentServer();
+      const sendResponse = await rpcServer.sendTransaction(signedTx);
 
-    while (retryCount < maxRetries) {
-      const status = await SorobanRpc.Server.getTransactionStatus(txHash);
-      if (status === 'SUCCESS') {
-        return { status: 'SUCCESS', txHash: txHash };
-      } else if (status === 'ERROR' || status === 'FAILED') {
-        const errorXDR = await SorobanRpc.Server.getTransactionError(txHash);
-        return { status: 'ERROR', error: errorXDR };
+      if (sendResponse.status === 'ERROR') {
+        throw new Error(sendResponse.error);
       }
-      await this.sleep(intervals[retryCount] || 4000);
-      retryCount++;
+
+     
+      const pollResult = await this.pollTransaction(
+        txHash,
+        rpcServer,
+        Date.now()
+      );
+
+      if (pollResult.status !== 'SUCCESS') {
+        throw new Error(`Transaction failed: ${pollResult.error}`);
+      }
+
+   
+      await prisma.transactionQueue.update({
+        where: { txHash },
+        data: {
+          status: 'SUCCESS',
+          ledger: pollResult.ledger,
+          resultXdr: pollResult.resultXdr,
+        },
+      });
+
+      return {
+        success: true,
+        txHash,
+        ledger: pollResult.ledger,
+      };
+    } catch (error: any) {
+     
+      if (txHash) {
+        await prisma.transactionQueue.update({
+          where: { txHash: txHash },
+          data: {
+            status: 'FAILED',
+            error: error.message,
+          },
+        });
+      }
+
+      if (this.isRetryable(error)) {
+        throw new Error(`RetryableError: ${error.message}`);
+      }
+      throw error;
     }
-    throw new Error('Transaction timed out');
   }
 
-  private sleep(ms: number) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+  private async pollTransaction(
+    txHash: string,
+    rpcServer: SorobanRpc.Server,
+    startTime: number,
+    attempt = 0
+  ): Promise<SorobanRpc.Api.GetTransactionResponse> {
+    const response = await rpcServer.getTransaction(txHash);
+
+    if (response.status === 'SUCCESS') {
+      return response;
+    }
+
+    if (response.status === 'NOT_FOUND') {
+     
+      if (Date.now() - startTime > 60000) {
+        throw new Error('Transaction polling timeout');
+      }
+
+     
+      const delay = Math.min(
+        4000,
+        500 * Math.pow(2, Math.min(attempt, 3))
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      return this.pollTransaction(txHash, rpcServer, startTime, attempt + 1);
+    }
+
+    throw new Error(`Transaction failed: ${response.error}`);
+  }
+
+  private isRetryable(error: any): boolean {
+    return error.message && error.message.toLowerCase().includes('timeout');
   }
 }
