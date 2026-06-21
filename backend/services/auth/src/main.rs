@@ -480,7 +480,7 @@ async fn main() -> std::io::Result<()> {
             missing_vars.join(", ")
         );
         tracing::error!("{}", err_msg);
-        return Err(std::io::Error::new(std::io::ErrorKind::Other, err_msg));
+        return Err(std::io::Error::other(err_msg));
     }
 
     let port = std::env::var("AUTH_PORT")
