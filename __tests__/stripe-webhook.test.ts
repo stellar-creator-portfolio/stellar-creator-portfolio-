@@ -10,17 +10,17 @@ import {
 } from '@/lib/payments/escrow-service'
 
 describe('processStripeWebhookEvent', () => {
-  beforeEach(() => {
-    __resetEscrowStoreForTests()
+  beforeEach(async () => {
+    await __resetEscrowStoreForTests()
   })
 
   it('marks escrow funded on amount_capturable_updated', async () => {
-    const e = createEscrow({
+    const e = await createEscrow({
       bountyId: 'b-1',
       clientUserId: 'u1',
       amountCents: 1000,
     })
-    attachPaymentIntent(e.id, 'pi_abc')
+    await attachPaymentIntent(e.id, 'pi_abc')
 
     const pi = {
       id: 'pi_abc',
@@ -38,16 +38,16 @@ describe('processStripeWebhookEvent', () => {
     } as Stripe.Event
 
     await processStripeWebhookEvent(event)
-    expect(getEscrow(e.id)?.status).toBe('funded_authorized')
+    expect((await getEscrow(e.id))?.status).toBe('funded_authorized')
   })
 
   it('resolves escrow by payment intent id', async () => {
-    const e = createEscrow({
+    const e = await createEscrow({
       bountyId: 'b-1',
       clientUserId: 'u1',
       amountCents: 1000,
     })
-    attachPaymentIntent(e.id, 'pi_xyz')
+    await attachPaymentIntent(e.id, 'pi_xyz')
 
     const pi = {
       id: 'pi_xyz',
@@ -62,6 +62,6 @@ describe('processStripeWebhookEvent', () => {
       data: { object: pi },
     } as Stripe.Event)
 
-    expect(findEscrowByPaymentIntent('pi_xyz')?.status).toBe('funded_authorized')
+    expect((await findEscrowByPaymentIntent('pi_xyz'))?.status).toBe('funded_authorized')
   })
 })
