@@ -5,7 +5,7 @@
  * Problem: Multiple concurrent transactions fetch the same sequence number,
  * causing all but one to fail with "bad sequence number" error.
  *
- * Solution: Distributed locking + local queue + atomic sequence increment
+ * Solution: Distributed locking via atomic Prisma updateMany (CAS) + local queue
  */
 
 import { prisma } from "@/lib/prisma";
@@ -90,7 +90,7 @@ export class SequenceManager {
 
   /**
    * Acquire sequence number with distributed lock
-   * Uses database lock to ensure atomicity across processes
+   * Uses atomic compare-and-swap (CAS) to ensure exclusivity across processes
    */
   private async acquireSequenceWithLock(
     transactionId: string,
@@ -99,9 +99,9 @@ export class SequenceManager {
 
     for (let attempt = 0; attempt < this.maxRetries; attempt++) {
       try {
-        // Try to acquire lock
-        const lock = await this.tryAcquireLock(transactionId);
-        if (!lock) {
+        // Try to acquire lock via atomic CAS
+        const acquired = await this.tryAcquireLock(transactionId);
+        if (!acquired) {
           // Lock held by another process, wait and retry
           await this.sleep(100 * Math.pow(2, attempt));
           continue;
@@ -114,7 +114,7 @@ export class SequenceManager {
           // Increment and store
           const nextSequence = currentSequence + 1n;
 
-          // Update lock with new sequence
+          // Update lock with new sequence (no CAS needed — we own the lock)
           await this.updateLockSequence(transactionId, nextSequence);
 
           return nextSequence;
@@ -144,50 +144,49 @@ export class SequenceManager {
   }
 
   /**
-   * Try to acquire distributed lock
-   * Returns lock if successful, null if already held
+   * Atomically acquire distributed lock using compare-and-swap (CAS).
+   *
+   * The old code raced between upsert + check + update — two concurrent
+   * callers could both see an expired lock and both try to claim it.
+   *
+   * Fix: single `updateMany` with a WHERE clause that atomically tests
+   * whether the lock is available (unowned OR expired).  If `count > 0`
+   * the calling process exclusively owns the lock.
    */
   private async tryAcquireLock(
     transactionId: string,
   ): Promise<SequenceLock | null> {
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + this.lockTimeout);
+
     try {
-      const lock = await prisma.sequenceLock.upsert({
-        where: { accountId: this.accountId },
-        update: {
-          // Only update if lock expired
-          lockedBy: transactionId,
-          lockedAt: new Date(),
-          expiresAt: new Date(Date.now() + this.lockTimeout),
-        },
-        create: {
+      // Step 1 — atomic CAS: only claim the lock if it is unowned or expired.
+      // We use updateMany so the WHERE clause is evaluated inside the same
+      // database transaction as the write.
+      const { count } = await prisma.sequenceLock.updateMany({
+        where: {
           accountId: this.accountId,
+          OR: [
+            { lockedBy: "" },                // unowned
+            { expiresAt: { lt: now } },      // stale lock
+          ],
+        },
+        data: {
           lockedBy: transactionId,
-          lockedAt: new Date(),
-          sequence: 0n,
-          expiresAt: new Date(Date.now() + this.lockTimeout),
+          lockedAt: now,
+          expiresAt,
         },
       });
 
-      // Check if we got the lock
-      if (lock.lockedBy === transactionId) {
-        return lock;
-      }
-
-      // Check if lock expired
-      if (lock.expiresAt < new Date()) {
-        // Force acquire expired lock
-        const updated = await prisma.sequenceLock.update({
+      if (count > 0) {
+        // We own the lock — fetch the full row for return value
+        const lock = await prisma.sequenceLock.findUnique({
           where: { accountId: this.accountId },
-          data: {
-            lockedBy: transactionId,
-            lockedAt: new Date(),
-            expiresAt: new Date(Date.now() + this.lockTimeout),
-          },
         });
-        return updated;
+        return lock as SequenceLock;
       }
 
-      // Lock held by another transaction
+      // Lock is held by another live transaction
       return null;
     } catch (error) {
       throw new Error(`Failed to acquire lock: ${(error as Error).message}`);
@@ -195,15 +194,18 @@ export class SequenceManager {
   }
 
   /**
-   * Release distributed lock
+   * Release distributed lock — only if WE hold it (guard by lockedBy).
    */
   private async releaseLock(transactionId: string): Promise<void> {
     try {
-      await prisma.sequenceLock.update({
-        where: { accountId: this.accountId },
+      await prisma.sequenceLock.updateMany({
+        where: {
+          accountId: this.accountId,
+          lockedBy: transactionId,
+        },
         data: {
-          lockedBy: "", // Clear lock
-          expiresAt: new Date(), // Expire immediately
+          lockedBy: "",
+          expiresAt: new Date(), // expire immediately
         },
       });
     } catch (error) {
@@ -218,8 +220,11 @@ export class SequenceManager {
     transactionId: string,
     sequence: bigint,
   ): Promise<void> {
-    await prisma.sequenceLock.update({
-      where: { accountId: this.accountId },
+    await prisma.sequenceLock.updateMany({
+      where: {
+        accountId: this.accountId,
+        lockedBy: transactionId,
+      },
       data: { sequence },
     });
   }
