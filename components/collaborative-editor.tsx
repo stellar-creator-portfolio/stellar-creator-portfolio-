@@ -67,12 +67,16 @@ export function CollaborativeEditor({
 
   const [token, setToken] = useState<string | undefined>(authToken)
 
-  // Fetch token if not provided as a prop
+  // Sync prop changes to state
   useEffect(() => {
     if (authToken) {
       setToken(authToken)
-      return
     }
+  }, [authToken])
+
+  // Fetch token if not provided as a prop
+  useEffect(() => {
+    if (authToken) return
 
     let active = true
     async function fetchToken() {
@@ -108,32 +112,32 @@ export function CollaborativeEditor({
 
   // Yjs document & provider – both scoped to docId so they are fully
   // destroyed and recreated whenever the document changes, preventing leaks.
-  const ydocRef = useRef<Y.Doc | null>(null)
-  const providerRef = useRef<WebsocketProvider | null>(null)
+  const [ydoc, setYdoc] = useState<Y.Doc | null>(null)
+  const [provider, setProvider] = useState<WebsocketProvider | null>(null)
 
   useEffect(() => {
     if (!token) return
 
     // Create a fresh Y.Doc for this docId
-    const ydoc = new Y.Doc()
-    ydocRef.current = ydoc
+    const newYdoc = new Y.Doc()
+    setYdoc(newYdoc)
 
-    const provider = new WebsocketProvider(serverUrl, docId, ydoc, {
+    const newProvider = new WebsocketProvider(serverUrl, docId, newYdoc, {
       params: { token },
     })
-    providerRef.current = provider
+    setProvider(newProvider)
 
     // Broadcast our presence
-    provider.awareness.setLocalStateField('user', user)
+    newProvider.awareness.setLocalStateField('user', user)
 
     return () => {
       // Destroy provider first (closes WS + clears awareness)
-      provider.destroy()
-      providerRef.current = null
+      newProvider.destroy()
+      setProvider(null)
 
       // Destroy the Y.Doc to release all CRDT state and event listeners
-      ydoc.destroy()
-      ydocRef.current = null
+      newYdoc.destroy()
+      setYdoc(null)
     }
     // Re-connect only when docId, server, or token changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -146,10 +150,10 @@ export function CollaborativeEditor({
         history: false,
       }),
       Collaboration.configure({
-        document: ydocRef.current,
+        document: ydoc || undefined,
       }),
       CollaborationCursor.configure({
-        provider: providerRef.current!,
+        provider: provider || undefined,
         user,
       }),
     ],
@@ -158,18 +162,7 @@ export function CollaborativeEditor({
     onUpdate({ editor }) {
       onChange?.(editor.getHTML())
     },
-  })
-
-  // Keep CollaborationCursor provider in sync after mount
-  useEffect(() => {
-    if (!editor || !providerRef.current) return
-    const cursorExt = editor.extensionManager.extensions.find(
-      (e) => e.name === 'collaborationCursor',
-    )
-    if (cursorExt) {
-      cursorExt.options.provider = providerRef.current
-    }
-  }, [editor])
+  }, [ydoc, provider])
 
   return (
     <div className={`collaborative-editor ${className}`}>
