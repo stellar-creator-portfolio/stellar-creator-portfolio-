@@ -97,10 +97,17 @@ export async function createEscrow(params: {
     params.feeBps ?? 1000,
   );
 
+  // Resolve the bounty's creator (freelancer who will receive payout on release).
+  // creatorId = freelancer; clientId = funder — they are distinct roles.
+  const bounty = await prisma.bounty.findUnique({
+    where: { id: params.bountyId },
+  });
+  if (!bounty) throw new Error(`Bounty ${params.bountyId} not found`);
+
   const row = await prisma.escrow.create({
     data: {
       bountyId: params.bountyId,
-      creatorId: params.clientUserId, // client=creator for escrow init
+      creatorId: bounty.creatorId,
       clientId: params.clientUserId,
       amount: params.amountCents,
       currency,

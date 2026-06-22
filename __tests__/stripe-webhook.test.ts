@@ -8,16 +8,34 @@ import {
   getEscrow,
   findEscrowByPaymentIntent,
 } from '@/lib/payments/escrow-service'
+import { prisma } from '@/lib/prisma'
+
+const BOUNTY_ID = 'b-test-webhook'
+const CREATOR_ID = 'creator-webhook'
+const CLIENT_ID = 'u1'
 
 describe('processStripeWebhookEvent', () => {
   beforeEach(async () => {
     await __resetEscrowStoreForTests()
+    // Ensure a bounty exists for createEscrow
+    await prisma.bounty.upsert({
+      where: { id: BOUNTY_ID },
+      update: {},
+      create: {
+        id: BOUNTY_ID,
+        creatorId: CREATOR_ID,
+        title: 'Test Bounty for Webhook',
+        description: 'Auto-created by webhook tests',
+        budget: 1000,
+        deadline: new Date('2027-01-01'),
+      },
+    })
   })
 
-  it('marks escrow funded on amount_capturable_updated', async () => {
+  it('marks escrow funded on amount_capturable_updated via metadata escrowId', async () => {
     const e = await createEscrow({
-      bountyId: 'b-1',
-      clientUserId: 'u1',
+      bountyId: BOUNTY_ID,
+      clientUserId: CLIENT_ID,
       amountCents: 1000,
     })
     await attachPaymentIntent(e.id, 'pi_abc')
@@ -41,10 +59,10 @@ describe('processStripeWebhookEvent', () => {
     expect((await getEscrow(e.id))?.status).toBe('funded_authorized')
   })
 
-  it('resolves escrow by payment intent id', async () => {
+  it('resolves escrow by payment intent id when no metadata escrowId', async () => {
     const e = await createEscrow({
-      bountyId: 'b-1',
-      clientUserId: 'u1',
+      bountyId: BOUNTY_ID,
+      clientUserId: CLIENT_ID,
       amountCents: 1000,
     })
     await attachPaymentIntent(e.id, 'pi_xyz')

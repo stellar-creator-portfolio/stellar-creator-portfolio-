@@ -11,10 +11,28 @@ import {
   markRefunded,
   getEscrow,
 } from '@/lib/payments/escrow-service'
+import { prisma } from '@/lib/prisma'
+
+const BOUNTY_ID = 'b-test-escrow'
+const CREATOR_ID = 'creator-test'
+const CLIENT_ID = 'user-1'
 
 describe('escrow-service', () => {
   beforeEach(async () => {
     await __resetEscrowStoreForTests()
+    // Ensure a bounty exists so createEscrow can resolve creatorId
+    await prisma.bounty.upsert({
+      where: { id: BOUNTY_ID },
+      update: {},
+      create: {
+        id: BOUNTY_ID,
+        creatorId: CREATOR_ID,
+        title: 'Test Bounty for Escrow',
+        description: 'Auto-created by escrow tests',
+        budget: 5000,
+        deadline: new Date('2027-01-01'),
+      },
+    })
   })
 
   it('computes platform fee at 10% by default', () => {
@@ -26,20 +44,28 @@ describe('escrow-service', () => {
     expect(computeFreelancerPayoutCents(10_000, 1000)).toBe(9000)
   })
 
-  it('creates escrow in pending_funding', async () => {
+  it('creates escrow in pending_funding with correct creatorId/clientId', async () => {
     const e = await createEscrow({
-      bountyId: 'b-1',
-      clientUserId: 'user-1',
+      bountyId: BOUNTY_ID,
+      clientUserId: CLIENT_ID,
       amountCents: 5000,
     })
     expect(e.status).toBe('pending_funding')
     expect(e.platformFeeCents).toBe(500)
+    // creatorId comes from bounty, NOT from clientUserId
+    expect(e.clientUserId).toBe(CREATOR_ID)
+  })
+
+  it('throws when bounty not found', async () => {
+    await expect(
+      createEscrow({ bountyId: 'nonexistent', clientUserId: 'u1', amountCents: 1000 }),
+    ).rejects.toThrow('Bounty nonexistent not found')
   })
 
   it('transitions funded -> released', async () => {
     const e = await createEscrow({
-      bountyId: 'b-1',
-      clientUserId: 'user-1',
+      bountyId: BOUNTY_ID,
+      clientUserId: CLIENT_ID,
       amountCents: 2000,
     })
     await attachPaymentIntent(e.id, 'pi_test')
@@ -52,8 +78,8 @@ describe('escrow-service', () => {
 
   it('supports refund path', async () => {
     const e = await createEscrow({
-      bountyId: 'b-1',
-      clientUserId: 'user-1',
+      bountyId: BOUNTY_ID,
+      clientUserId: CLIENT_ID,
       amountCents: 2000,
     })
     await markRefunded(e.id)
@@ -62,8 +88,8 @@ describe('escrow-service', () => {
 
   it('only one concurrent markReleased succeeds (optimistic locking)', async () => {
     const e = await createEscrow({
-      bountyId: 'b-1',
-      clientUserId: 'user-1',
+      bountyId: BOUNTY_ID,
+      clientUserId: CLIENT_ID,
       amountCents: 5000,
     })
     await attachPaymentIntent(e.id, 'pi_concurrent')
