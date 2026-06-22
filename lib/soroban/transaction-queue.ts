@@ -11,18 +11,18 @@
  * - Real Soroban RPC submission via Stellar SDK
  */
 
-import { prisma } from "@/lib/prisma";
 import { getSequenceManager } from "./sequence-manager";
 import {
   Server,
   TransactionBuilder,
+  Keypair,
   Account,
   Contract,
   TimeoutInfinite,
   nativeToScVal,
   rpc,
 } from "@stellar/stellar-sdk";
-import { stellarClient } from "@/services/api/stellar/client";
+import { StellarClient } from "@/services/api/stellar/client";
 
 /**
  * Transaction queue entry
@@ -92,9 +92,15 @@ export class TransactionQueue {
 
     this.queue.push(transaction);
 
-    // Start processing if not already running
+    // Start processing if not already running.
+    // Fire-and-forget: enqueue returns immediately; queue processes in background.
     if (!this.isProcessing) {
-      this.processQueue();
+      this.processQueue().catch((err) => {
+        console.error(
+          `[TransactionQueue] processQueue crashed for account ${this.accountId}:`,
+          err,
+        );
+      });
     }
 
     return transaction.id;
@@ -127,9 +133,6 @@ export class TransactionQueue {
           if (result.success) {
             // Remove from queue on success
             this.queue.shift();
-            transaction.status = "confirmed";
-            transaction.txHash = result.txHash;
-            transaction.confirmedAt = new Date();
           } else {
             // Retry on failure
             transaction.attempts++;
@@ -176,11 +179,14 @@ export class TransactionQueue {
       const sequence = await sequenceManager.getNextSequence();
       transaction.sequence = sequence;
 
-      // Submit transaction to Soroban RPC
+      // Submit transaction to Soroban RPC (build → simulate → assemble → sign → send → poll)
       const txHash = await this.submitToSoroban(transaction, sequence);
 
-      transaction.status = "submitted";
+      // submitToSoroban polls for confirmation internally, so the tx is
+      // already confirmed (or threw) by the time we get here.
+      transaction.status = "confirmed";
       transaction.submittedAt = new Date();
+      transaction.confirmedAt = new Date();
       transaction.txHash = txHash;
 
       return {
@@ -191,9 +197,6 @@ export class TransactionQueue {
       };
     } catch (error) {
       const errorMsg = (error as Error).message;
-
-      // Check if error is retryable
-      const isRetryable = this.isRetryableError(errorMsg);
 
       return {
         success: false,
@@ -206,16 +209,24 @@ export class TransactionQueue {
   /**
    * Submit transaction to Soroban RPC.
    *
-   * Builds a proper Stellar transaction with the contract invocation,
-   * simulates it to obtain the resource footprint and assembled transaction,
-   * then sends it to the Soroban RPC endpoint.
+   * Full lifecycle: Build → Simulate → Assemble → Sign → Send → Poll.
+   * Signs with the admin keypair resolved via StellarClient (KMS-backed).
    */
   private async submitToSoroban(
     transaction: QueuedTransaction,
     sequence: bigint,
   ): Promise<string> {
-    const rpcServer: Server = stellarClient.rpc;
-    const networkPassphrase: string = stellarClient.config.networkPassphrase;
+    // Resolve StellarClient (cached singleton after first call)
+    const client = await StellarClient.getInstance();
+    const rpcServer: Server = client.rpc;
+    const networkPassphrase: string = client.config.networkPassphrase;
+    const adminSecret: string | undefined = client.config.adminSecret;
+    if (!adminSecret) {
+      throw new Error(
+        "StellarClient has no adminSecret — cannot sign transactions",
+      );
+    }
+    const adminKp = Keypair.fromSecret(adminSecret);
     const contract = new Contract(transaction.contractId);
 
     // 1. Build the raw transaction
@@ -241,13 +252,13 @@ export class TransactionQueue {
       );
     }
 
-    // 3. Assemble (applies sorobanData, resource fee, etc.)
+    // 3. Assemble — applies sorobanData, resource fee, etc. from simulation
     tx = rpc.assembleTransaction(tx, simulation).build();
 
-    // 4. Send to network — note: signing happens externally via
-    //    ImprovedContractService which holds the Signer; the raw
-    //    send produces a TX_PENDING envelope that the caller can
-    //    sign and re-submit.
+    // 4. Sign with admin keypair (required before sendTransaction)
+    tx.sign(adminKp);
+
+    // 5. Send signed transaction to network
     const sendResp = await rpcServer.sendTransaction(tx);
 
     if (sendResp.status === "ERROR") {
@@ -256,7 +267,7 @@ export class TransactionQueue {
       );
     }
 
-    // 5. Poll for confirmation
+    // 6. Poll for confirmation
     return await this.pollForConfirmation(sendResp.hash, rpcServer);
   }
 
