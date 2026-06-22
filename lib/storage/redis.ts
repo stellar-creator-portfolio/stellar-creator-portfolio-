@@ -21,6 +21,7 @@ export const KEYS = {
   users:     (suffix: string) => `users:${suffix}`,
   user:      (id: string)     => `user:${id}`,
   rateLimit: (key: string)    => `rl:${key}`,
+  collab:    (docName: string) => `collab:${docName}`,
 } as const
 
 // ── Singleton ─────────────────────────────────────────────────────────────────

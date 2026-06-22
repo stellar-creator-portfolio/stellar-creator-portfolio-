@@ -4,6 +4,8 @@
  */
 import { type NextRequest, NextResponse } from 'next/server'
 import { WebSocket } from 'ws'
+import { getToken } from 'next-auth/jwt'
+import jwt from 'jsonwebtoken'
 
 export const runtime = 'nodejs'
 
@@ -39,6 +41,24 @@ export async function POST(req: NextRequest) {
 
     // Handle WebSocket-like actions via HTTP for development
     switch (action) {
+      case 'token': {
+        const sessionToken = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+        if (!sessionToken) {
+          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+        }
+        const userId = sessionToken.id || sessionToken.sub || 'user'
+        const secret = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET || 'your-nextauth-secret'
+        const token = jwt.sign(
+          {
+            userId,
+            permittedDocIds: [docName || 'default', '*']
+          },
+          secret,
+          { expiresIn: '1h' }
+        )
+        return NextResponse.json({ token })
+      }
+
       case 'connect':
         return NextResponse.json({
           success: true,
