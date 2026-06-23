@@ -478,6 +478,32 @@ enum AuditStatus {
   DENIED
 }
 
+// ── Cross-Chain Swaps ────────────────────────────────────────────────────
+
+model CrossChainSwap {
+  id           String    @id @default(cuid())
+  routeId      String
+  senderAddress String
+  fromChain    String
+  toChain      String
+  fromAmount   String
+  toAmount     String
+  fromTxHash   String?
+  bridgeTxHash String?
+  toTxHash     String?
+  status       String    @default("pending")
+  amountOut    String?
+  slippageBps Int        @default(50)
+  completedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([routeId, senderAddress])
+  @@index([senderAddress])
+  @@index([status])
+  @@index([createdAt])
+}
+
 // ── Soroban Sequence Management ──────────────────────────────────────────
 
 model SequenceLock {
