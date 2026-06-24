@@ -31,19 +31,19 @@ beforeEach(() => {
 describe('apiFetch', () => {
   it('unwraps a success envelope', async () => {
     mockFetch(apiSuccess({ id: 'alex-studio' }));
-    const data = await apiFetch<{ id: string }>('/api/v1/creators/alex-studio');
+    const data = await apiFetch<{ id: string }>('/api/creators/alex-studio');
     expect(data.id).toBe('alex-studio');
   });
 
   it('throws ApiClientError on API failure', async () => {
     mockFetch(apiFailure('NOT_FOUND', 'Creator not found'), 404);
-    await expect(apiFetch('/api/v1/creators/missing')).rejects.toThrow(ApiClientError);
+    await expect(apiFetch('/api/creators/missing')).rejects.toThrow(ApiClientError);
   });
 
   it('sets correct error code from API failure', async () => {
     mockFetch(apiFailure('UNAUTHORIZED', 'No token'), 401);
     try {
-      await apiFetch('/api/v1/bounties');
+      await apiFetch('/api/bounties');
     } catch (e) {
       expect(e).toBeInstanceOf(ApiClientError);
       expect((e as ApiClientError).code).toBe('UNAUTHORIZED');
@@ -53,8 +53,8 @@ describe('apiFetch', () => {
 
   it('throws network error when fetch rejects', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Failed to fetch')));
-    await expect(apiFetch('/api/v1/creators')).rejects.toThrow(ApiClientError);
-    await expect(apiFetch('/api/v1/creators')).rejects.toMatchObject({
+    await expect(apiFetch('/api/creators')).rejects.toThrow(ApiClientError);
+    await expect(apiFetch('/api/creators')).rejects.toMatchObject({
       code: 'SERVICE_UNAVAILABLE',
     });
   });
@@ -67,7 +67,7 @@ describe('apiFetch', () => {
         json: () => Promise.reject(new SyntaxError('Unexpected token')),
       }),
     );
-    await expect(apiFetch('/api/v1/creators')).rejects.toMatchObject({
+    await expect(apiFetch('/api/creators')).rejects.toMatchObject({
       code: 'INTERNAL_SERVER_ERROR',
     });
   });
@@ -94,7 +94,7 @@ describe('fetchCreator', () => {
     vi.stubGlobal('fetch', fetchMock);
     const creator = await fetchCreator('alex-studio');
     expect(creator.name).toBe('Alex Chen');
-    expect((fetchMock.mock.calls[0] as [string])[0]).toContain('/api/v1/creators/alex-studio');
+    expect((fetchMock.mock.calls[0] as [string])[0]).toContain('/api/creators/alex-studio');
   });
 });
 
@@ -145,7 +145,7 @@ describe('fetchFreelancers', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     await fetchFreelancers();
-    expect((fetchMock.mock.calls[0] as [string])[0]).toContain('/api/v1/freelancers');
+    expect((fetchMock.mock.calls[0] as [string])[0]).toContain('/api/freelancers');
   });
 
   it('appends discipline param', async () => {
@@ -168,7 +168,7 @@ describe('fetchFreelancer', () => {
     vi.stubGlobal('fetch', fetchMock);
     const result = await fetchFreelancer('wallet-1') as { address: string };
     expect(result.address).toBe('wallet-1');
-    expect((fetchMock.mock.calls[0] as [string])[0]).toContain('/api/v1/freelancers/wallet-1');
+    expect((fetchMock.mock.calls[0] as [string])[0]).toContain('/api/freelancers/wallet-1');
   });
 });
 
@@ -180,7 +180,7 @@ describe('fetchBounties', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     await fetchBounties();
-    expect((fetchMock.mock.calls[0] as [string])[0]).toContain('/api/v1/bounties');
+    expect((fetchMock.mock.calls[0] as [string])[0]).toContain('/api/bounties');
   });
 
   it('appends category and difficulty params', async () => {
@@ -221,7 +221,7 @@ describe('fetchCreatorReputation', () => {
     const result = await fetchCreatorReputation('alex-studio');
     expect(result.creatorId).toBe('alex-studio');
     expect(result.aggregation.averageRating).toBe(4.9);
-    expect((fetchMock.mock.calls[0] as [string])[0]).toContain('/api/v1/creators/alex-studio/reputation');
+    expect((fetchMock.mock.calls[0] as [string])[0]).toContain('/api/creators/alex-studio/reputation');
   });
 
   it('throws ApiClientError on 404', async () => {
@@ -252,7 +252,7 @@ describe('submitReview', () => {
     const result = await submitReview(validReview);
     expect(result.reviewId).toBe('rev-42');
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain('/api/v1/reviews');
+    expect(url).toContain('/api/reviews');
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body as string).bountyId).toBe('b-1');
   });
@@ -288,7 +288,7 @@ describe('ApiClientError — additional codes', () => {
       status: 409,
       json: () => Promise.resolve(apiFailure('CONFLICT', 'Already exists')),
     }));
-    await expect(apiFetch('/api/v1/creators')).rejects.toMatchObject({ code: 'CONFLICT', status: 409 });
+    await expect(apiFetch('/api/creators')).rejects.toMatchObject({ code: 'CONFLICT', status: 409 });
   });
 
   it('preserves UNPROCESSABLE_ENTITY code', async () => {
@@ -296,59 +296,59 @@ describe('ApiClientError — additional codes', () => {
       status: 422,
       json: () => Promise.resolve(apiFailure('UNPROCESSABLE_ENTITY', 'Unprocessable')),
     }));
-    await expect(apiFetch('/api/v1/bounties')).rejects.toMatchObject({ code: 'UNPROCESSABLE_ENTITY', status: 422 });
+    await expect(apiFetch('/api/bounties')).rejects.toMatchObject({ code: 'UNPROCESSABLE_ENTITY', status: 422 });
   });
 });
 
 // ── API versioning ────────────────────────────────────────────────────────────
 
 describe('API versioning', () => {
-  it('API_VERSION is v1', () => {
-    expect(API_VERSION).toBe('v1');
+  it('API_VERSION is empty because routes are unversioned', () => {
+    expect(API_VERSION).toBe('');
   });
 
-  it('API_BASE is /api/v1', () => {
-    expect(API_BASE).toBe('/api/v1');
+  it('API_BASE is /api', () => {
+    expect(API_BASE).toBe('/api');
   });
 
-  it('apiFetch sends Accept-Version header', async () => {
+  it('apiFetch does not send Accept-Version header', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       status: 200,
       json: () => Promise.resolve(apiSuccess({})),
     });
     vi.stubGlobal('fetch', fetchMock);
-    await apiFetch('/api/v1/health');
+    await apiFetch('/api/health');
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect((init.headers as Record<string, string>)['Accept-Version']).toBe('v1');
+    expect((init.headers as Record<string, string>)['Accept-Version']).toBeUndefined();
   });
 
-  it('domain helpers use versioned paths', async () => {
+  it('domain helpers use unversioned paths', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       status: 200,
       json: () => Promise.resolve(apiSuccess({ creators: [], total: 0 })),
     });
     vi.stubGlobal('fetch', fetchMock);
     await fetchCreators();
-    expect((fetchMock.mock.calls[0] as [string])[0]).toContain('/api/v1/creators');
+    expect((fetchMock.mock.calls[0] as [string])[0]).toContain('/api/creators');
   });
 
-  it('fetchBounties uses versioned path', async () => {
+  it('fetchBounties uses unversioned path', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       status: 200,
       json: () => Promise.resolve(apiSuccess({ items: [], pagination: { page: 1, limit: 10, total: 0, totalPages: 0 } })),
     });
     vi.stubGlobal('fetch', fetchMock);
     await fetchBounties();
-    expect((fetchMock.mock.calls[0] as [string])[0]).toContain('/api/v1/bounties');
+    expect((fetchMock.mock.calls[0] as [string])[0]).toContain('/api/bounties');
   });
 
-  it('fetchFreelancers uses versioned path', async () => {
+  it('fetchFreelancers uses unversioned path', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       status: 200,
       json: () => Promise.resolve(apiSuccess({ freelancers: [], total: 0 })),
     });
     vi.stubGlobal('fetch', fetchMock);
     await fetchFreelancers();
-    expect((fetchMock.mock.calls[0] as [string])[0]).toContain('/api/v1/freelancers');
+    expect((fetchMock.mock.calls[0] as [string])[0]).toContain('/api/freelancers');
   });
 });

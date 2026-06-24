@@ -100,7 +100,7 @@ describe('submitEscrowTransaction — deposit', () => {
     vi.stubGlobal('fetch', fetchMock);
     await submitEscrowTransaction(depositRequest);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain('/api/v1/escrow/transaction');
+    expect(url).toContain('/api/escrow/transaction');
     expect(init.method).toBe('POST');
     const body = JSON.parse(init.body as string) as EscrowTransactionRequest;
     expect(body.operation).toBe('deposit');
@@ -155,7 +155,7 @@ describe('releaseEscrow', () => {
     vi.stubGlobal('fetch', fetchMock);
     await releaseEscrow('42', 'GPAYER123');
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain('/api/v1/escrow/42/release');
+    expect(url).toContain('/api/escrow/42/release');
     expect(init.method).toBe('POST');
     const body = JSON.parse(init.body as string) as { authorizerAddress: string };
     expect(body.authorizerAddress).toBe('GPAYER123');

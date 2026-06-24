@@ -59,8 +59,8 @@ export class ApiClientError extends Error {
 const BASE_URL =
   typeof process !== "undefined" ? (process.env.NEXT_PUBLIC_API_URL ?? "") : "";
 
-export const API_VERSION = "v1";
-export const API_BASE = `/api/${API_VERSION}`;
+export const API_VERSION = "";
+export const API_BASE = "/api";
 
 /** localStorage key where the JWT is stored after a successful auth flow. */
 const JWT_STORAGE_KEY = "stellar_auth_token";
@@ -110,7 +110,6 @@ export async function apiFetch<T>(
   const headers: HeadersInit = {
     "Content-Type": "application/json",
     Accept: "application/json",
-    "Accept-Version": API_VERSION,
     ...authHeader,
     ...(init.headers ?? {}),
   };
@@ -172,7 +171,7 @@ async function dedupedFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
 // ── Domain helpers ────────────────────────────────────────────────────────────
 
-/** GET /api/v1/creators — optionally filter by discipline or search term. */
+/** GET /api/creators - optionally filter by discipline or search term. */
 export async function fetchCreators(params?: {
   discipline?: string;
   search?: string;
@@ -184,12 +183,12 @@ export async function fetchCreators(params?: {
   return dedupedFetch(`${API_BASE}/creators${query}`);
 }
 
-/** GET /api/v1/creators/:id */
+/** GET /api/creators/:id */
 export async function fetchCreator(id: string): Promise<Creator> {
   return dedupedFetch(`${API_BASE}/creators/${id}`);
 }
 
-/** GET /api/v1/creators/:id/reputation */
+/** GET /api/creators/:id/reputation */
 export async function fetchCreatorReputation(
   id: string,
 ): Promise<CreatorReputationPayload> {
@@ -216,7 +215,7 @@ export async function fetchCreatorReputationBatch(
   });
 }
 
-/** GET /api/v1/creators/:id/reviews - Enhanced with filtering support */
+/** GET /api/creators/:id/reviews - Enhanced with filtering support */
 export async function fetchCreatorReviews(
   id: string,
   filters?: {
@@ -257,7 +256,7 @@ export async function fetchCreatorReviews(
   return apiFetch(`${API_BASE}/creators/${id}/reviews${query}`);
 }
 
-/** GET /api/v1/reviews - List all reviews with filtering */
+/** GET /api/reviews - List all reviews with filtering */
 export async function fetchAllReviews(filters?: {
   minRating?: number;
   maxRating?: number;
@@ -294,7 +293,7 @@ export async function fetchAllReviews(filters?: {
   return apiFetch(`${API_BASE}/reviews${query}`);
 }
 
-/** GET /api/v1/bounties — optionally paginated. */
+/** GET /api/bounties - optionally paginated. */
 export async function fetchBounties(params?: {
   page?: number;
   limit?: number;
@@ -312,12 +311,12 @@ export async function fetchBounties(params?: {
   return apiFetch(`${API_BASE}/bounties${query}`);
 }
 
-/** GET /api/v1/bounties/:id */
+/** GET /api/bounties/:id */
 export async function fetchBounty(id: string): Promise<Bounty> {
   return apiFetch(`${API_BASE}/bounties/${id}`);
 }
 
-/** GET /api/v1/freelancers — optionally filter by discipline. */
+/** GET /api/freelancers - optionally filter by discipline. */
 export async function fetchFreelancers(params?: {
   discipline?: string;
 }): Promise<{ freelancers: unknown[]; total: number }> {
@@ -327,12 +326,12 @@ export async function fetchFreelancers(params?: {
   return apiFetch(`${API_BASE}/freelancers${query}`);
 }
 
-/** GET /api/v1/freelancers/:address */
+/** GET /api/freelancers/:address */
 export async function fetchFreelancer(address: string): Promise<unknown> {
   return apiFetch(`${API_BASE}/freelancers/${address}`);
 }
 
-/** POST /api/v1/reviews — submit a review after bounty completion. */
+/** POST /api/reviews - submit a review after bounty completion. */
 export async function submitReview(
   data: ReviewSubmission,
 ): Promise<{ reviewId: string }> {
@@ -342,7 +341,7 @@ export async function submitReview(
   });
 }
 
-/** POST /api/v1/escrow/transaction — submit a Stellar escrow transaction via the backend SDK. */
+/** POST /api/escrow/transaction - submit a Stellar escrow transaction via the backend SDK. */
 export async function submitEscrowTransaction(
   data: EscrowTransactionRequest,
 ): Promise<EscrowTransactionResponse> {
@@ -352,7 +351,7 @@ export async function submitEscrowTransaction(
   });
 }
 
-/** POST /api/v1/escrow/:id/release — release escrowed funds to payee. */
+/** POST /api/escrow/:id/release - release escrowed funds to payee. */
 export async function releaseEscrow(
   escrowId: string,
   authorizerAddress: string,
@@ -387,7 +386,7 @@ export interface WebhookAck {
 }
 
 /**
- * POST /api/v1/webhooks/payment — forward an external payment event to the
+ * POST /api/webhooks/payment - forward an external payment event to the
  * backend webhook handler. Primarily used in server-side code or tests;
  * the real webhook endpoint is called directly by the payment provider.
  */

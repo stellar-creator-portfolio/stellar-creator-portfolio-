@@ -9,16 +9,14 @@ import { ReviewForm } from '@/components/review-form';
 import { ErrorAlert } from '@/components/error-alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { CheckCircle, ChevronLeft, ChevronRight, Info } from 'lucide-react';
+import { CheckCircle, ChevronLeft, ChevronRight, Info, Star } from 'lucide-react';
 import { 
   Tooltip, 
   TooltipContent, 
   TooltipProvider, 
   TooltipTrigger 
 } from '@/components/ui/tooltip';
-import { CheckCircle, ChevronLeft, ChevronRight, Star } from 'lucide-react';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
 
 interface FilteredReputationPayload {
   creatorId: string;
@@ -117,7 +115,7 @@ export function CreatorReputation({ creatorId }: { creatorId: string }) {
       });
       
       const queryString = params.toString();
-      const url = `${API_BASE}/api/v1/creators/${encodeURIComponent(creatorId)}/reviews${queryString ? `?${queryString}` : ''}`;
+      const url = `${API_BASE}/api/creators/${encodeURIComponent(creatorId)}/reviews${queryString ? `?${queryString}` : ''}`;
       
       const res = await fetch(url, { 
         headers: { Accept: 'application/json' } 
@@ -292,6 +290,7 @@ export function CreatorReputation({ creatorId }: { creatorId: string }) {
                 </Tooltip>
               </TooltipProvider>
             </div>
+          </div>
 
           <Histogram 
             aggregation={displayAggregation} 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+import { apiFailure, apiSuccess } from '@/lib/api-models'
 import { getCreatorById, isValidCreatorId } from '@/lib/services/creators-data'
 
 type CreatorRouteContext = {
@@ -13,7 +14,7 @@ export async function GET(_request: NextRequest, context: CreatorRouteContext) {
 
   if (!isValidCreatorId(id)) {
     return NextResponse.json(
-      { error: 'Invalid creator id' },
+      apiFailure('BAD_REQUEST', 'Invalid creator id'),
       { status: 400 },
     )
   }
@@ -21,10 +22,10 @@ export async function GET(_request: NextRequest, context: CreatorRouteContext) {
   const creator = getCreatorById(id)
   if (!creator) {
     return NextResponse.json(
-      { error: 'Creator not found' },
+      apiFailure('NOT_FOUND', 'Creator not found'),
       { status: 404 },
     )
   }
 
-  return NextResponse.json({ data: creator })
+  return NextResponse.json(apiSuccess(creator))
 }

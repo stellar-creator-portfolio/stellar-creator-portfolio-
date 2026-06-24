@@ -13,7 +13,7 @@ Replace individual review fetches with the new hook:
 const [payload, setPayload] = useState<FilteredReputationPayload | null>(null);
 
 useEffect(() => {
-  const url = `${API_BASE}/api/v1/creators/${creatorId}/reviews?...`;
+  const url = `${API_BASE}/api/creators/${creatorId}/reviews?...`;
   fetch(url)
     .then((res) => res.json())
     .then(setPayload);
@@ -38,7 +38,7 @@ Already done! Check `app/layout.tsx` - it now wraps your app with `DataLoaderPro
 1. Open your browser DevTools (F12)
 2. Go to Network tab
 3. Navigate to creators list page
-4. **Before**: You'd see 20+ individual `/api/v1/creators/{id}/reviews` requests
+4. **Before**: You'd see 20+ individual `/api/creators/{id}/reviews` requests
 5. **After**: You should see 1-2 batch requests to `/api/creators/reviews/batch`
 
 ## Performance Verification

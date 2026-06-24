@@ -276,7 +276,7 @@ export interface Bounty {
   escrowId?: string;
 }
 
-// ── Anchor reliability (GET /api/v1/anchors/scores) ──────────────────────────
+// ── Anchor reliability (GET /api/anchors/scores) ──────────────────────────
 
 /** Computed reliability score for a single anchor. */
 export interface AnchorReliabilityScore {

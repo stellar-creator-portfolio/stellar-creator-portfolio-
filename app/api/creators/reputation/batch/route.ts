@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiFailure, apiSuccess } from "@/lib/api-models";
 import { getReviewsForCreator } from "@/lib/services/review-service";
 
 /**
@@ -13,14 +14,14 @@ export async function POST(request: NextRequest) {
 
     if (!Array.isArray(creatorIds) || creatorIds.length === 0) {
       return NextResponse.json(
-        { error: "creatorIds must be a non-empty array" },
+        apiFailure("VALIDATION_ERROR", "creatorIds must be a non-empty array"),
         { status: 400 },
       );
     }
 
     if (creatorIds.length > 100) {
       return NextResponse.json(
-        { error: "Maximum 100 creators per batch" },
+        apiFailure("VALIDATION_ERROR", "Maximum 100 creators per batch"),
         { status: 400 },
       );
     }
@@ -63,11 +64,11 @@ export async function POST(request: NextRequest) {
       }),
     );
 
-    return NextResponse.json(results);
+    return NextResponse.json(apiSuccess(results));
   } catch (error) {
     console.error("Batch reputation fetch error:", error);
     return NextResponse.json(
-      { error: "Failed to fetch reputation data" },
+      apiFailure("INTERNAL_SERVER_ERROR", "Failed to fetch reputation data"),
       { status: 500 },
     );
   }
