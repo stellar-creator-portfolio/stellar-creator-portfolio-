@@ -6,12 +6,9 @@
  * Flow:
  *  1. The query string is sent to the embedding endpoint to get a vector.
  *  2. The vector is compared against stored creator embeddings via cosine
- *     similarity (or delegated to a pgvector / Supabase RPC call).
+ *     similarity (delegated to pgvector via the /api/search/vector endpoint).
  *  3. Results are ranked by similarity score and optionally filtered by
  *     high-dimension tag vectors.
- *
- * In production, replace `_embed` with a real embedding model call
- * (e.g. OpenAI text-embedding-3-small, Cohere, or a self-hosted model).
  */
 
 const EMBED_ENDPOINT =
@@ -56,6 +53,10 @@ export async function vectorSearch(
     body: JSON.stringify({ query, limit, threshold, tags }),
   });
 
+  if (res.status === 429) {
+    throw new Error('Rate limit exceeded. Please try again later.');
+  }
+
   if (!res.ok) {
     throw new Error(`Vector search failed: ${res.statusText}`);
   }
@@ -68,12 +69,24 @@ export async function vectorSearch(
  * Used client-side for lightweight re-ranking.
  */
 export function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0, normA = 0, normB = 0;
+  if (a.length !== b.length) {
+    throw new Error('Vectors must have the same length');
+  }
+
+  if (a.length === 0) {
+    return 0;
+  }
+
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];
     normA += a[i] * a[i];
     normB += b[i] * b[i];
   }
+
   const denom = Math.sqrt(normA) * Math.sqrt(normB);
   return denom === 0 ? 0 : dot / denom;
 }
@@ -96,5 +109,8 @@ export function filterByTags(
       return { ...r, matchedTags: matched };
     })
     .filter((r) => r.matchedTags.length > 0)
-    .sort((a, b) => b.matchedTags.length - a.matchedTags.length || b.score - a.score);
+    .sort(
+      (a, b) =>
+        b.matchedTags.length - a.matchedTags.length || b.score - a.score,
+    );
 }
