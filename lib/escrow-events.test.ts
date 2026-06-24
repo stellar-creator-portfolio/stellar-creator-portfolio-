@@ -9,6 +9,7 @@
  *  - Error handling for failed or unknown event types
  */
 
+import 'whatwg-fetch';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   submitEscrowTransaction,

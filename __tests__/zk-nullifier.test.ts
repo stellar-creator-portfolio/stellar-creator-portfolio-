@@ -26,7 +26,7 @@ describe('ZK Proof Nullifier Uniqueness', () => {
     const poseidon = await buildPoseidon();
     
     for (let i = 0; i < 100; i++) {
-      const randomCredential = `cred-${i}-${Math.random()}`;
+      const randomCredential = `cred-${i}-${crypto.randomUUID()}`;
       const nullifier = await computeNullifier(randomCredential, subjectId, poseidon);
       
       expect(nullifiers.has(nullifier)).toBe(false);

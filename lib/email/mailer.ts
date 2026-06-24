@@ -48,7 +48,7 @@ export function renderEmail(template: EmailTemplate, vars: Record<string, string
     <body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
       <h2>${headline}</h2>
       <p>${bodyText}</p>
-      ${actionUrl ? `<p><a href="${actionUrl}" style="display:inline-block;padding:10px 20px;background:#6366f1;color:#fff;text-decoration:none;border-radius:6px;">${actionLabel}</a></p>` : ''}
+      ${actionUrl ? `<p><a href="${actionUrl.replace(/"/g, '&quot;')}" style="display:inline-block;padding:10px 20px;background:#6366f1;color:#fff;text-decoration:none;border-radius:6px;">${actionLabel}</a></p>` : ''}
       ${footerNote ? `<p style="color:#888;font-size:13px;margin-top:32px;">${footerNote}</p>` : ''}
     </body>
     </html>
