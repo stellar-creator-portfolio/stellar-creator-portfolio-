@@ -1,10 +1,20 @@
 import { PrismaClient } from '@prisma/client';
 import { createPrismaTracingMiddleware } from '@/backend/services/tracing';
+import { queryMonitor } from '@/lib/performance/query-monitor';
 
 function buildPrismaClient(): PrismaClient {
   const client = new PrismaClient();
+
   // Attach OpenTelemetry tracing middleware — creates a child span per DB query
   client.$use(createPrismaTracingMiddleware());
+
+  // Attach query monitoring in development — records every Prisma query for diagnostics
+  if (process.env.NODE_ENV === 'development') {
+    client.$on('query' as never, (e: { query: string; duration: number }) => {
+      queryMonitor.recordPrismaQuery(e.query, e.duration);
+    });
+  }
+
   return client;
 }
 

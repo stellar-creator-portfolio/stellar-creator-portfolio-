@@ -1,31 +1,13 @@
-/**
- * Soroban Sequence Number Manager
- * Manages account sequence numbers to prevent nonce collisions under concurrent load
- *
- * Problem: Multiple concurrent transactions fetch the same sequence number,
- * causing all but one to fail with "bad sequence number" error.
- *
- * Solution: Distributed locking + local queue + atomic sequence increment
- */
-
 import { prisma } from "@/lib/prisma";
 
-/**
- * Sequence lock entry in database
- * Ensures only one transaction can increment sequence at a time
- */
 export interface SequenceLock {
   accountId: string;
   lockedAt: Date;
-  lockedBy: string; // transaction ID
+  lockedBy: string;
   sequence: bigint;
   expiresAt: Date;
 }
 
-/**
- * Sequence manager for a single account
- * Handles local queuing and distributed locking
- */
 export class SequenceManager {
   private accountId: string;
   private localQueue: Array<{
@@ -34,17 +16,31 @@ export class SequenceManager {
     reject: (err: Error) => void;
   }> = [];
   private isProcessing = false;
-  private lockTimeout = 5000; // 5 seconds
+  private _shuttingDown = false;
+  private currentRequest: {
+    id: string;
+    resolve: (seq: bigint) => void;
+    reject: (err: Error) => void;
+  } | null = null;
+  private lockTimeout: number;
   private maxRetries = 3;
+  private fetchSequenceFn: () => Promise<bigint>;
 
-  constructor(accountId: string) {
+  constructor(
+    accountId: string,
+    options?: {
+      fetchSequenceFn?: () => Promise<bigint>;
+      lockTimeout?: number;
+    },
+  ) {
     this.accountId = accountId;
+    this.fetchSequenceFn =
+      options?.fetchSequenceFn ?? this.defaultFetchSequence.bind(this);
+    this.lockTimeout =
+      options?.lockTimeout ??
+      parseInt(process.env.SOROBAN_LOCK_TIMEOUT_MS ?? "5000", 10);
   }
 
-  /**
-   * Get next sequence number with distributed locking
-   * Ensures no two transactions get the same sequence
-   */
   async getNextSequence(): Promise<bigint> {
     return new Promise((resolve, reject) => {
       this.localQueue.push({
@@ -53,17 +49,28 @@ export class SequenceManager {
         reject,
       });
 
-      // Start processing if not already running
       if (!this.isProcessing) {
         this.processQueue();
       }
     });
   }
 
-  /**
-   * Process queued sequence requests one at a time
-   * Ensures strict ordering and no collisions
-   */
+  drainQueue(): void {
+    this._shuttingDown = true;
+    const err = new Error("SequenceManager: shutting down");
+
+    if (this.currentRequest) {
+      this.currentRequest.reject(err);
+      this.currentRequest = null;
+    }
+
+    for (const request of this.localQueue) {
+      request.reject(err);
+    }
+    this.localQueue = [];
+    this.isProcessing = false;
+  }
+
   private async processQueue(): Promise<void> {
     if (this.isProcessing || this.localQueue.length === 0) {
       return;
@@ -72,15 +79,24 @@ export class SequenceManager {
     this.isProcessing = true;
 
     try {
-      while (this.localQueue.length > 0) {
+      while (this.localQueue.length > 0 && !this._shuttingDown) {
         const request = this.localQueue.shift();
         if (!request) break;
 
+        this.currentRequest = request;
         try {
           const sequence = await this.acquireSequenceWithLock(request.id);
+          if (this._shuttingDown) {
+            this.currentRequest?.reject(
+              new Error("SequenceManager: shutting down"),
+            );
+            return;
+          }
           request.resolve(sequence);
         } catch (error) {
           request.reject(error as Error);
+        } finally {
+          this.currentRequest = null;
         }
       }
     } finally {
@@ -88,10 +104,6 @@ export class SequenceManager {
     }
   }
 
-  /**
-   * Acquire sequence number with distributed lock
-   * Uses database lock to ensure atomicity across processes
-   */
   private async acquireSequenceWithLock(
     transactionId: string,
   ): Promise<bigint> {
@@ -99,38 +111,29 @@ export class SequenceManager {
 
     for (let attempt = 0; attempt < this.maxRetries; attempt++) {
       try {
-        // Try to acquire lock
-        const lock = await this.tryAcquireLock(transactionId);
-        if (!lock) {
-          // Lock held by another process, wait and retry
+        const acquired = await this.tryAcquireLock(transactionId);
+        if (!acquired) {
           await this.sleep(100 * Math.pow(2, attempt));
           continue;
         }
 
         try {
-          // Get current sequence from Soroban RPC
-          const currentSequence = await this.fetchCurrentSequence();
-
-          // Increment and store
+          const currentSequence = await this.fetchSequenceFn();
           const nextSequence = currentSequence + 1n;
 
-          // Update lock with new sequence
           await this.updateLockSequence(transactionId, nextSequence);
 
           return nextSequence;
         } finally {
-          // Always release lock
           await this.releaseLock(transactionId);
         }
       } catch (error) {
         lastError = error as Error;
 
-        // If lock timeout, retry
         if ((error as Error).message.includes("lock timeout")) {
           continue;
         }
 
-        // For other errors, fail immediately
         throw error;
       }
     }
@@ -143,67 +146,54 @@ export class SequenceManager {
     );
   }
 
-  /**
-   * Try to acquire distributed lock
-   * Returns lock if successful, null if already held
-   */
-  private async tryAcquireLock(
-    transactionId: string,
-  ): Promise<SequenceLock | null> {
+  private async tryAcquireLock(transactionId: string): Promise<boolean> {
+    const now = new Date();
+
+    const result = await prisma.sequenceLock.updateMany({
+      where: {
+        accountId: this.accountId,
+        OR: [
+          { lockedBy: "" },
+          { expiresAt: { lt: now } },
+        ],
+      },
+      data: {
+        lockedBy: transactionId,
+        lockedAt: now,
+        expiresAt: new Date(Date.now() + this.lockTimeout),
+      },
+    });
+
+    if (result.count === 1) {
+      return true;
+    }
+
     try {
-      const lock = await prisma.sequenceLock.upsert({
-        where: { accountId: this.accountId },
-        update: {
-          // Only update if lock expired
-          lockedBy: transactionId,
-          lockedAt: new Date(),
-          expiresAt: new Date(Date.now() + this.lockTimeout),
-        },
-        create: {
+      await prisma.sequenceLock.create({
+        data: {
           accountId: this.accountId,
           lockedBy: transactionId,
-          lockedAt: new Date(),
-          sequence: 0n,
+          lockedAt: now,
           expiresAt: new Date(Date.now() + this.lockTimeout),
+          sequence: 0n,
         },
       });
-
-      // Check if we got the lock
-      if (lock.lockedBy === transactionId) {
-        return lock;
-      }
-
-      // Check if lock expired
-      if (lock.expiresAt < new Date()) {
-        // Force acquire expired lock
-        const updated = await prisma.sequenceLock.update({
-          where: { accountId: this.accountId },
-          data: {
-            lockedBy: transactionId,
-            lockedAt: new Date(),
-            expiresAt: new Date(Date.now() + this.lockTimeout),
-          },
-        });
-        return updated;
-      }
-
-      // Lock held by another transaction
-      return null;
-    } catch (error) {
-      throw new Error(`Failed to acquire lock: ${(error as Error).message}`);
+      return true;
+    } catch {
+      return false;
     }
   }
 
-  /**
-   * Release distributed lock
-   */
   private async releaseLock(transactionId: string): Promise<void> {
     try {
-      await prisma.sequenceLock.update({
-        where: { accountId: this.accountId },
+      await prisma.sequenceLock.updateMany({
+        where: {
+          accountId: this.accountId,
+          lockedBy: transactionId,
+        },
         data: {
-          lockedBy: "", // Clear lock
-          expiresAt: new Date(), // Expire immediately
+          lockedBy: "",
+          expiresAt: new Date(),
         },
       });
     } catch (error) {
@@ -211,25 +201,20 @@ export class SequenceManager {
     }
   }
 
-  /**
-   * Update lock with new sequence number
-   */
   private async updateLockSequence(
     transactionId: string,
     sequence: bigint,
   ): Promise<void> {
-    await prisma.sequenceLock.update({
-      where: { accountId: this.accountId },
+    await prisma.sequenceLock.updateMany({
+      where: {
+        accountId: this.accountId,
+        lockedBy: transactionId,
+      },
       data: { sequence },
     });
   }
 
-  /**
-   * Fetch current sequence from Soroban RPC
-   */
-  private async fetchCurrentSequence(): Promise<bigint> {
-    // This would call Soroban RPC to get current sequence
-    // For now, return cached value from database
+  private async defaultFetchSequence(): Promise<bigint> {
     const lock = await prisma.sequenceLock.findUnique({
       where: { accountId: this.accountId },
     });
@@ -237,32 +222,23 @@ export class SequenceManager {
     return lock?.sequence ?? 0n;
   }
 
-  /**
-   * Sleep helper
-   */
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
 
-/**
- * Global sequence managers per account
- */
 const managers = new Map<string, SequenceManager>();
 
-/**
- * Get or create sequence manager for account
- */
-export function getSequenceManager(accountId: string): SequenceManager {
+export function getSequenceManager(
+  accountId: string,
+  options?: { fetchSequenceFn?: () => Promise<bigint>; lockTimeout?: number },
+): SequenceManager {
   if (!managers.has(accountId)) {
-    managers.set(accountId, new SequenceManager(accountId));
+    managers.set(accountId, new SequenceManager(accountId, options));
   }
   return managers.get(accountId)!;
 }
 
-/**
- * Clear all sequence managers (for testing)
- */
 export function clearSequenceManagers(): void {
   managers.clear();
 }

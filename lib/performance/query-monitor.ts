@@ -11,11 +11,20 @@ interface QueryMetric {
   batchSize?: number;
 }
 
+interface PrismaQueryMetric {
+  operation: string;
+  duration: number;
+  timestamp: number;
+}
+
 class QueryMonitor {
   private metrics: QueryMetric[] = [];
+  private prismaMetrics: PrismaQueryMetric[] = [];
   private readonly maxMetrics = 1000;
   private enabled =
     typeof window !== "undefined" && process.env.NODE_ENV === "development";
+  private prismaEnabled =
+    typeof window === "undefined" && process.env.NODE_ENV === "development";
 
   recordQuery(
     path: string,
@@ -36,6 +45,20 @@ class QueryMonitor {
     // Keep only recent metrics
     if (this.metrics.length > this.maxMetrics) {
       this.metrics = this.metrics.slice(-this.maxMetrics);
+    }
+  }
+
+  recordPrismaQuery(operation: string, duration: number) {
+    if (!this.prismaEnabled) return;
+
+    this.prismaMetrics.push({
+      operation,
+      duration,
+      timestamp: Date.now(),
+    });
+
+    if (this.prismaMetrics.length > this.maxMetrics) {
+      this.prismaMetrics = this.prismaMetrics.slice(-this.maxMetrics);
     }
   }
 
@@ -126,8 +149,13 @@ class QueryMonitor {
     console.groupEnd();
   }
 
+  getPrismaQueryCount(): number {
+    return this.prismaMetrics.length;
+  }
+
   clear() {
     this.metrics = [];
+    this.prismaMetrics = [];
   }
 }
 

@@ -59,6 +59,7 @@ model User {
   
   // Platform specific relations
   creatorProfile CreatorProfile?
+  embedding      CreatorEmbedding?
   clientProfile  ClientProfile?
   bounties       Bounty[]
   applications   BountyApplication[]
@@ -113,6 +114,7 @@ model CreatorProfile {
   websiteUrl  String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  embedding   CreatorEmbedding?
 
   @@index([userId])
   @@index([discipline])
@@ -477,6 +479,46 @@ enum AuditStatus {
   SUCCESS
   FAILURE
   DENIED
+}
+
+// ── Cross-Chain Swaps ────────────────────────────────────────────────────
+
+model CrossChainSwap {
+  id           String    @id @default(cuid())
+  routeId      String
+  senderAddress String
+  fromChain    String
+  toChain      String
+  fromAmount   String
+  toAmount     String
+  fromTxHash   String?
+  bridgeTxHash String?
+  toTxHash     String?
+  status       String    @default("pending")
+  amountOut    String?
+  slippageBps Int        @default(50)
+  completedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([routeId, senderAddress])
+  @@index([senderAddress])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ── Vector Embeddings for Semantic Search ─────────────────────────────────
+
+model CreatorEmbedding {
+  id         String   @id @default(cuid())
+  creatorId  String   @unique
+  creator    CreatorProfile @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  embedding  Unsupported("vector(1536)")?
+  model      String   @default("text-embedding-3-small")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([creatorId])
 }
 
 // ── Soroban Sequence Management ──────────────────────────────────────────

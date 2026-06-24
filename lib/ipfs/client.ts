@@ -1,4 +1,12 @@
-import { buildGatewayUrl, fetchViaGateways, verifyContentHash } from './gateways';
+import {
+  InvalidCidError,
+  assertMatchingCid,
+  assertValidCidV1,
+  createRawCidV1FromSha256,
+} from './cid';
+import { buildGatewayUrl, fetchViaGateways, verifyCidResolvable, verifyContentHash } from './gateways';
+
+export { InvalidCidError, createRawCidV1, createRawCidV1FromSha256, sha256ToCid } from './cid';
 
 export interface IpfsUploadResult {
   cid: string;
@@ -17,6 +25,8 @@ export interface IpfsPinEntry {
 }
 
 const PIN_API = process.env.NEXT_PUBLIC_IPFS_PIN_API ?? '/api/ipfs/pin';
+const PIN_REGISTRY_KEY = 'ipfs-pins';
+const RETRY_PIN_TIMEOUT_MS = 30_000;
 
 /** Compute SHA-256 hex digest using Web Crypto (browser-native). */
 export async function computeSha256(file: Blob | ArrayBuffer): Promise<string> {
@@ -27,20 +37,13 @@ export async function computeSha256(file: Blob | ArrayBuffer): Promise<string> {
     .join('');
 }
 
-/**
- * Derive a content-addressed CID placeholder from SHA-256.
- * Production deployments should replace with proper multibase CID (e.g. via ipfs-only-hash).
- */
-export function sha256ToCid(sha256: string): string {
-  return `bafy${sha256.slice(0, 52)}`;
-}
-
 /** Upload file directly from the browser to the pinning API. */
 export async function uploadToIpfs(
   file: File,
   onProgress?: (pct: number) => void,
 ): Promise<IpfsUploadResult> {
   const sha256 = await computeSha256(file);
+  const expectedCid = createRawCidV1FromSha256(sha256);
   onProgress?.(10);
 
   const form = new FormData();
@@ -73,7 +76,50 @@ export async function uploadToIpfs(
     xhr.send(form);
   });
 
+  assertMatchingCid(result.cid, expectedCid);
+
+  const resolved = await verifyCidResolvable(result.cid);
+  if (!resolved && !(await retryPin(result.cid))) {
+    throw new Error(`Pinned CID is not resolvable: ${result.cid}`);
+  }
+
+  savePinEntry({
+    cid: result.cid,
+    sha256,
+    name: file.name,
+    size: result.size,
+    pinnedAt: new Date().toISOString(),
+    gatewayUrl: result.gatewayUrl || buildGatewayUrl(result.cid),
+  });
   return result;
+}
+
+export async function retryPin(cid: string): Promise<boolean> {
+  assertValidCidV1(cid);
+
+  const deadline = Date.now() + RETRY_PIN_TIMEOUT_MS;
+  let delayMs = 500;
+
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(PIN_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cid }),
+      });
+
+      if (!res.ok) return false;
+    } catch {
+      return false;
+    }
+
+    if (await verifyCidResolvable(cid)) return true;
+
+    await delay(Math.min(delayMs, Math.max(0, deadline - Date.now())));
+    delayMs = Math.min(delayMs * 2, 4_000);
+  }
+
+  return false;
 }
 
 /** Retrieve pinned content with cryptographic hash verification and gateway fallback. */
@@ -96,7 +142,15 @@ export function getPublicUrl(cid: string): string {
 export function loadPinRegistry(): IpfsPinEntry[] {
   if (typeof window === 'undefined') return [];
   try {
-    return JSON.parse(localStorage.getItem('ipfs-pins') ?? '[]') as IpfsPinEntry[];
+    const raw = localStorage.getItem(PIN_REGISTRY_KEY) ?? '[]';
+    const entries = JSON.parse(raw) as IpfsPinEntry[];
+    const migrated = migratePinRegistry(entries);
+
+    if (JSON.stringify(migrated) !== raw) {
+      localStorage.setItem(PIN_REGISTRY_KEY, JSON.stringify(migrated));
+    }
+
+    return migrated;
   } catch {
     return [];
   }
@@ -104,5 +158,39 @@ export function loadPinRegistry(): IpfsPinEntry[] {
 
 export function savePinEntry(entry: IpfsPinEntry): void {
   const existing = loadPinRegistry();
-  localStorage.setItem('ipfs-pins', JSON.stringify([entry, ...existing.filter((e) => e.cid !== entry.cid)]));
+  localStorage.setItem(PIN_REGISTRY_KEY, JSON.stringify([entry, ...existing.filter((e) => e.cid !== entry.cid)]));
+}
+
+export function migratePinRegistry(entries: IpfsPinEntry[]): IpfsPinEntry[] {
+  const migrated = new Map<string, IpfsPinEntry>();
+
+  for (const entry of entries) {
+    const cid = recomputeEntryCid(entry);
+    const nextEntry = cid
+      ? {
+          ...entry,
+          cid,
+          gatewayUrl: buildGatewayUrl(cid),
+        }
+      : entry;
+
+    migrated.set(nextEntry.cid, nextEntry);
+  }
+
+  return Array.from(migrated.values());
+}
+
+function recomputeEntryCid(entry: IpfsPinEntry): string | null {
+  try {
+    const cid = createRawCidV1FromSha256(entry.sha256);
+    assertValidCidV1(cid);
+    return cid;
+  } catch (err) {
+    if (err instanceof InvalidCidError) return null;
+    throw err;
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
