@@ -4,6 +4,8 @@ import { Analytics } from "@vercel/analytics/next";
 import { ThemeProvider } from "next-themes";
 import { LayoutProvider } from "@/components/layout-provider";
 import { DataLoaderProvider } from "@/app/providers/DataLoaderProvider";
+import { Toaster } from "@/components/ui/toaster";
+import { OfflineQueueWatcher } from "@/components/OfflineQueueWatcher";
 import "./globals.css";
 
 const _geist = Geist({ subsets: ["latin"] });
@@ -76,6 +78,8 @@ export default function RootLayout({
           <DataLoaderProvider>
             <LayoutProvider>{children}</LayoutProvider>
           </DataLoaderProvider>
+          <OfflineQueueWatcher />
+          <Toaster />
           <Analytics />
         </ThemeProvider>
       </body>

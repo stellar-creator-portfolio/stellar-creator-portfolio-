@@ -64,6 +64,7 @@ export const API_BASE = `/api/${API_VERSION}`;
 
 /** localStorage key where the JWT is stored after a successful auth flow. */
 const JWT_STORAGE_KEY = "stellar_auth_token";
+const REFRESH_TOKEN_KEY = "stellar_refresh_token";
 
 /**
  * Persist a JWT so subsequent requests are automatically authenticated.
@@ -75,10 +76,20 @@ export function setAuthToken(token: string): void {
   }
 }
 
+/** Store both access and refresh tokens after auth or token refresh. */
+export function setTokens(accessToken: string, refreshToken?: string): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(JWT_STORAGE_KEY, accessToken);
+  if (refreshToken) {
+    localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+  }
+}
+
 /** Remove the stored JWT (e.g. on logout). */
 export function clearAuthToken(): void {
   if (typeof window !== "undefined") {
     localStorage.removeItem(JWT_STORAGE_KEY);
+    localStorage.removeItem(REFRESH_TOKEN_KEY);
   }
 }
 
@@ -86,6 +97,12 @@ export function clearAuthToken(): void {
 export function getAuthToken(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem(JWT_STORAGE_KEY);
+}
+
+/** Read the refresh token from localStorage, or null if not present. */
+export function getRefreshToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(REFRESH_TOKEN_KEY);
 }
 
 /**

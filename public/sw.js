@@ -1,16 +1,3 @@
-/**
- * Issue #630 — Service Worker Advanced Request Interception
- *
- * Routing heuristics:
- *   /api/*              → network-first, offline mock on failure
- *   /_next/static/*     → cache-first (immutable assets)
- *   images / fonts      → cache-first with stale-while-revalidate
- *   navigate (HTML)     → network-first with /offline.html fallback
- *
- * Offline mutations are stored in IndexedDB and replayed via Background Sync
- * when connectivity is restored (sync tag: "stellar-mutation-queue").
- */
-
 const CACHE_VERSION = 'v1';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
@@ -55,10 +42,8 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Only intercept same-origin requests
   if (url.origin !== self.location.origin) return;
 
-  // Skip non-GET mutations — they go through the offline queue path instead
   if (request.method !== 'GET') {
     event.respondWith(handleMutationRequest(request));
     return;
@@ -111,12 +96,10 @@ async function cacheFirst(request, cacheName) {
 async function staleWhileRevalidate(request, cacheName) {
   const cache = await caches.open(cacheName);
   const cached = await cache.match(request);
-
   const networkFetch = fetch(request.clone()).then((response) => {
     if (response.ok) cache.put(request.clone(), response.clone());
     return response;
   });
-
   return cached ?? networkFetch;
 }
 
@@ -135,10 +118,6 @@ async function navigationHandler(request) {
 
 // ── Offline API mocking ───────────────────────────────────────────────────────
 
-/**
- * Returns a plausible mock response for known API endpoints so the UI
- * degrades gracefully rather than breaking completely while offline.
- */
 function buildOfflineMock(url) {
   const body = getMockBody(url.pathname);
   return new Response(JSON.stringify(body), {
@@ -166,15 +145,12 @@ function getMockBody(pathname) {
   return { offline: true, error: 'Unavailable offline' };
 }
 
-// ── Mutation queue (non-GET requests while offline) ───────────────────────────
-
-const DB_NAME = 'stellar-sw-queue';
-const STORE_NAME = 'mutations';
+// ── Mutation queue ────────────────────────────────────────────────────────────
 
 function openQueueDB() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(STORE_NAME, { autoIncrement: true });
+    const req = indexedDB.open('stellar-offline-queue', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('mutations', { autoIncrement: true });
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
@@ -183,14 +159,21 @@ function openQueueDB() {
 async function enqueueOfflineMutation(request) {
   const db = await openQueueDB();
   const body = await request.text();
+  const headers = {};
+  request.headers.forEach((v, k) => { headers[k] = v; });
+  const hasAuth = 'authorization' in headers;
+  delete headers['authorization'];
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).add({
+    const tx = db.transaction('mutations', 'readwrite');
+    tx.objectStore('mutations').add({
       url: request.url,
       method: request.method,
-      headers: [...request.headers.entries()],
+      headers,
       body,
       timestamp: Date.now(),
+      requiresAuth: hasAuth,
+      retryCount: 0,
+      status: 'pending',
     });
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
@@ -213,55 +196,29 @@ async function handleMutationRequest(request) {
 
 self.addEventListener('sync', (event) => {
   if (event.tag === 'stellar-mutation-queue') {
-    event.waitUntil(replayMutationQueue());
+    event.waitUntil(notifyClientsToFlush());
   }
 });
 
-async function replayMutationQueue() {
-  const db = await openQueueDB();
-  const mutations = await getAllMutations(db);
-
-  for (const { id, record } of mutations) {
-    try {
-      const headers = new Headers(record.headers);
-      await fetch(record.url, {
-        method: record.method,
-        headers,
-        body: record.body || undefined,
-      });
-      await deleteMutation(db, id);
-    } catch {
-      // Leave failed mutations in the queue to retry on the next sync event.
-    }
+async function notifyClientsToFlush() {
+  const clients = await self.clients.matchAll({ type: 'window' });
+  for (const client of clients) {
+    client.postMessage({ type: 'FLUSH_OFFLINE_QUEUE' });
   }
 }
 
-function getAllMutations(db) {
-  return new Promise((resolve, reject) => {
-    const results = [];
-    const tx = db.transaction(STORE_NAME, 'readonly');
-    const cursor = tx.objectStore(STORE_NAME).openCursor();
-    cursor.onsuccess = (e) => {
-      const cur = e.target.result;
-      if (cur) {
-        results.push({ id: cur.key, record: cur.value });
-        cur.continue();
-      } else {
-        resolve(results);
-      }
-    };
-    cursor.onerror = () => reject(cursor.error);
-  });
-}
-
-function deleteMutation(db, key) {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).delete(key);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
+// Listen for flush results from clients
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'FLUSH_RESULT') {
+    const { replayed, failed, authFailed } = event.data;
+    if (failed > 0 || authFailed > 0) {
+      self.registration.showNotification('Offline Queue Sync', {
+        body: `Replayed: ${replayed}, Failed: ${failed}, Auth failures: ${authFailed}`,
+        icon: '/icons/icon-192.png',
+      });
+    }
+  }
+});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
