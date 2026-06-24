@@ -203,6 +203,7 @@ model Review {
   status            ReviewStatus @default(PENDING)
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
+  nullifier         String       @unique
 
   @@index([creatorId])
   @@index([reviewerId])

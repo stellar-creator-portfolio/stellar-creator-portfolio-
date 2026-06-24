@@ -69,9 +69,24 @@ export function ReviewForm({
       );
 
       // Step 2: verify locally before submission.
-      if (!verifyProofLocally(zkProof)) {
+      const isValidProof = await verifyProofLocally(zkProof);
+      if (!isValidProof) {
         setProofStatus('failed');
         setError('Cryptographic verification failed. Please try again.');
+        return;
+      }
+
+      // Step 3: verify with server (uniqueness check)
+      const verifyRes = await fetch('/api/reviews/verify-proof', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(zkProof),
+      });
+
+      if (!verifyRes.ok) {
+        const data = await verifyRes.json().catch(() => ({}));
+        setProofStatus('failed');
+        setError(data.error || 'Server rejected the proof or nullifier already used.');
         return;
       }
     } catch (err) {
