@@ -291,7 +291,7 @@ function qualify_input_list(prefix,input,input1){
 
 function qualify_input(prefix,input,input1) {
     if (Array.isArray(input)) {
-	a = flatArray(input);
+	let a = flatArray(input);
 	if (a.length > 0) {
 	    let t = typeof a[0];
 	    for (let i = 1; i<a.length; i++) {
