@@ -59,6 +59,7 @@ model User {
   
   // Platform specific relations
   creatorProfile CreatorProfile?
+  embedding      CreatorEmbedding?
   clientProfile  ClientProfile?
   bounties       Bounty[]
   applications   BountyApplication[]
@@ -113,6 +114,7 @@ model CreatorProfile {
   websiteUrl  String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  embedding   CreatorEmbedding?
 
   @@index([userId])
   @@index([discipline])
@@ -502,6 +504,20 @@ model CrossChainSwap {
   @@index([senderAddress])
   @@index([status])
   @@index([createdAt])
+}
+
+// ── Vector Embeddings for Semantic Search ─────────────────────────────────
+
+model CreatorEmbedding {
+  id         String   @id @default(cuid())
+  creatorId  String   @unique
+  creator    CreatorProfile @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  embedding  Unsupported("vector(1536)")?
+  model      String   @default("text-embedding-3-small")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([creatorId])
 }
 
 // ── Soroban Sequence Management ──────────────────────────────────────────

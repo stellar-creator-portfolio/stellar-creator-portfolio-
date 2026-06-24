@@ -60,6 +60,12 @@ import {
   type CreatorDocument,
 } from '@/backend/services/search';
 
+import {
+  cosineSimilarity,
+  filterByTags,
+  type VectorSearchResult,
+} from '@/lib/search/vectorSearch';
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function makeLexicalHit(id: string, score: number, source: Partial<CreatorDocument> = {}) {
@@ -394,5 +400,108 @@ describe('ensureIndex()', () => {
     esMocks.mockIndicesExists.mockResolvedValue(false);
     await ensureIndex();
     expect(esMocks.mockIndicesCreate).toHaveBeenCalledOnce();
+  });
+});
+
+// ── cosineSimilarity ──────────────────────────────────────────────────────────
+
+describe('cosineSimilarity()', () => {
+  it('returns 1.0 for identical vectors', () => {
+    const v = [1, 2, 3, 4, 5];
+    expect(cosineSimilarity(v, v)).toBeCloseTo(1.0, 10);
+  });
+
+  it('returns 0.0 for orthogonal vectors', () => {
+    const a = [1, 0];
+    const b = [0, 1];
+    expect(cosineSimilarity(a, b)).toBe(0);
+  });
+
+  it('returns 0.0 for zero vectors', () => {
+    const zero = [0, 0, 0];
+    const nonZero = [1, 2, 3];
+    expect(cosineSimilarity(zero, nonZero)).toBe(0);
+  });
+
+  it('returns 0.0 when both vectors are zero', () => {
+    const zero = [0, 0, 0];
+    expect(cosineSimilarity(zero, zero)).toBe(0);
+  });
+
+  it('returns -1.0 for opposite vectors', () => {
+    const a = [1, 2, 3];
+    const b = [-1, -2, -3];
+    expect(cosineSimilarity(a, b)).toBeCloseTo(-1.0, 10);
+  });
+
+  it('returns correct value for similar vectors', () => {
+    const a = [1, 2, 3];
+    const b = [1, 2, 4];
+    const expected =
+      (1 * 1 + 2 * 2 + 3 * 4) /
+      (Math.sqrt(1 + 4 + 9) * Math.sqrt(1 + 4 + 16));
+    expect(cosineSimilarity(a, b)).toBeCloseTo(expected, 10);
+  });
+
+  it('throws for vectors of different lengths', () => {
+    const a = [1, 2, 3];
+    const b = [1, 2];
+    expect(() => cosineSimilarity(a, b)).toThrow('same length');
+  });
+
+  it('handles empty vectors', () => {
+    expect(cosineSimilarity([], [])).toBe(0);
+  });
+});
+
+// ── filterByTags ──────────────────────────────────────────────────────────────
+
+describe('filterByTags()', () => {
+  const results: VectorSearchResult[] = [
+    {
+      id: '1',
+      name: 'Alice',
+      title: 'Designer',
+      discipline: 'Design',
+      skills: ['figma', 'ui', 'ux'],
+      score: 0.9,
+      matchedTags: [],
+    },
+    {
+      id: '2',
+      name: 'Bob',
+      title: 'Developer',
+      discipline: 'Engineering',
+      skills: ['typescript', 'react', 'node'],
+      score: 0.8,
+      matchedTags: [],
+    },
+  ];
+
+  it('returns all results when no tags specified', () => {
+    expect(filterByTags(results, [])).toEqual(results);
+  });
+
+  it('filters results by matching skills', () => {
+    const filtered = filterByTags(results, ['figma']);
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].id).toBe('1');
+    expect(filtered[0].matchedTags).toContain('figma');
+  });
+
+  it('filters results by discipline', () => {
+    const filtered = filterByTags(results, ['engineering']);
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].id).toBe('2');
+  });
+
+  it('returns empty when no matches', () => {
+    const filtered = filterByTags(results, ['python']);
+    expect(filtered).toHaveLength(0);
+  });
+
+  it('is case-insensitive', () => {
+    const filtered = filterByTags(results, ['FIGMA']);
+    expect(filtered).toHaveLength(1);
   });
 });
