@@ -7,11 +7,11 @@ import path from 'path';
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { proof, publicSignals, nullifier, rating, subjectId } = body;
+    const { proof: zkProofData, publicSignals, nullifier } = body;
 
     if (
-      !proof ||
-      typeof proof !== 'object' ||
+      !zkProofData ||
+      typeof zkProofData !== 'object' ||
       !Array.isArray(publicSignals) ||
       typeof nullifier !== 'string'
     ) {
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
     const vkey = JSON.parse(vkeyJson);
 
     // Verify cryptographic proof
-    const isValid = await snarkjs.groth16.verify(vkey, publicSignals, proof);
+    const isValid = await snarkjs.groth16.verify(vkey, publicSignals, zkProofData);
     if (!isValid) {
       return NextResponse.json({ error: 'Invalid ZK proof' }, { status: 400 });
     }

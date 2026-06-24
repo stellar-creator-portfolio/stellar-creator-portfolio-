@@ -64,7 +64,7 @@ module.exports = async function builder(code, options) {
     });
 
     const sanityCheck =
-        options
+        options;
 //        options &&
 //        (
 //            options.sanityCheck ||
