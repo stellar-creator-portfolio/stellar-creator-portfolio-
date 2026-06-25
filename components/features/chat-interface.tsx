@@ -125,6 +125,9 @@ export function ChatInterface({ initialThreadId = 'general' }: Props) {
     moderate,
     setPassphrase: updatePassphrase,
     search: searchMessages,
+    loadMore,
+    hasMore,
+    loadingHistory,
   } = useMessages(activeThread, currentUser)
 
   useEffect(() => {
@@ -301,6 +304,17 @@ export function ChatInterface({ initialThreadId = 'general' }: Props) {
         </header>
 
         <div className="flex-1 space-y-3 overflow-y-auto rounded-xl bg-muted/40 p-4">
+          {hasMore && (
+            <div className="flex justify-center">
+              <button
+                onClick={loadMore}
+                disabled={loadingHistory}
+                className="rounded-lg bg-muted px-4 py-2 text-xs text-muted-foreground hover:bg-border transition-colors"
+              >
+                {loadingHistory ? 'Loading…' : 'Load earlier messages'}
+              </button>
+            </div>
+          )}
           {filteredMessages.length === 0 && (
             <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
               No messages yet. Start the conversation!

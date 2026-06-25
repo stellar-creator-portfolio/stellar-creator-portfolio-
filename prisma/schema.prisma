@@ -59,7 +59,6 @@ model User {
   
   // Platform specific relations
   creatorProfile CreatorProfile?
-  embedding      CreatorEmbedding?
   clientProfile  ClientProfile?
   bounties       Bounty[]
   applications   BountyApplication[]
@@ -114,7 +113,6 @@ model CreatorProfile {
   websiteUrl  String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  embedding   CreatorEmbedding?
 
   @@index([userId])
   @@index([discipline])
@@ -347,17 +345,10 @@ model MatchNotification {
 
 model Escrow {
   id              String   @id @default(cuid())
-  bountyId        String
   creatorId       String
   clientId        String
-  freelancerUserId String?
   amount          Int
-  currency        String   @default("usd")
-  platformFeeCents Int     @default(0)
-  paymentIntentId String?
   status          String   @default("active")
-  receiptUrl      String?
-  failureMessage  String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   releasedAt      DateTime?
@@ -366,10 +357,8 @@ model Escrow {
   disputeReason   String?
   version         Int      @default(1)
 
-  @@index([bountyId])
   @@index([creatorId])
   @@index([clientId])
-  @@index([paymentIntentId])
   @@index([status])
   @@index([createdAt])
   @@index([creatorId, status])
@@ -480,44 +469,30 @@ enum AuditStatus {
   DENIED
 }
 
-// ── Cross-Chain Swaps ────────────────────────────────────────────────────
+// ── Messaging ────────────────────────────────────────────────────────────
 
-model CrossChainSwap {
-  id           String    @id @default(cuid())
-  routeId      String
-  senderAddress String
-  fromChain    String
-  toChain      String
-  fromAmount   String
-  toAmount     String
-  fromTxHash   String?
-  bridgeTxHash String?
-  toTxHash     String?
-  status       String    @default("pending")
-  amountOut    String?
-  slippageBps Int        @default(50)
-  completedAt  DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+/// Archived messages — moved from Redis after TTL expiry via background job.
+model Message {
+  id            String   @id
+  threadId      String
+  senderId      String
+  recipientId   String
+  ciphertext    String
+  iv            String
+  createdAt     DateTime
+  attachment    Json?    /// { name, type, size, data (base64) }
+  status        String   @default("sent")   /// sent | delivered | read
+  readBy        String[] @default([])
+  metadata      Json?
 
-  @@unique([routeId, senderAddress])
-  @@index([senderAddress])
-  @@index([status])
-  @@index([createdAt])
-}
+  /// Cursor for archive chronological ordering
+  archivedAt    DateTime @default(now())
+  expiresAt     DateTime /// when the Redis copy expired
 
-// ── Vector Embeddings for Semantic Search ─────────────────────────────────
-
-model CreatorEmbedding {
-  id         String   @id @default(cuid())
-  creatorId  String   @unique
-  creator    CreatorProfile @relation(fields: [creatorId], references: [id], onDelete: Cascade)
-  embedding  Unsupported("vector(1536)")?
-  model      String   @default("text-embedding-3-small")
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  @@index([creatorId])
+  @@index([threadId, createdAt])
+  @@index([senderId])
+  @@index([recipientId])
+  @@index([expiresAt])
 }
 
 // ── Soroban Sequence Management ──────────────────────────────────────────
