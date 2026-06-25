@@ -201,12 +201,16 @@ model Review {
   helpfulCount      Int          @default(0)
   notHelpfulCount   Int          @default(0)
   status            ReviewStatus @default(PENDING)
+  nullifier         String?      @unique
+  zkProof           Json?        /// Groth16 proof JSON
+  zkPublicSignals   String[]     /// Public signals from proof
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
   @@index([creatorId])
   @@index([reviewerId])
   @@index([status])
+  @@index([nullifier])
 }
 
 model ReviewVote {
