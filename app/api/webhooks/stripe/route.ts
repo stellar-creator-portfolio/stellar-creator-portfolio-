@@ -1,8 +1,31 @@
 import type Stripe from "stripe";
+import { NextResponse, type NextRequest } from "next/server";
 import {
   findEscrowByPaymentIntent,
   markFundedAuthorized,
 } from "@/lib/payments/escrow-service";
+import { getStripe, getStripeWebhookSecret } from "@/lib/payments/stripe";
+import { redisCheckRateLimit, redisGet, redisSet } from "@/lib/storage/redis";
+
+const STRIPE_WEBHOOK_DEDUPE_TTL_SECONDS = 24 * 60 * 60;
+const STRIPE_WEBHOOK_RATE_LIMIT_PER_SECOND = 10;
+
+function clientIpFor(req: NextRequest): string {
+  const forwardedFor = req.headers.get("x-forwarded-for");
+  if (forwardedFor) {
+    return forwardedFor.split(",")[0]?.trim() || "unknown";
+  }
+
+  return req.headers.get("x-real-ip")?.trim() || "unknown";
+}
+
+function stripeAccountScope(event: Stripe.Event): string {
+  return event.account || "platform";
+}
+
+function stripeEventDedupeKey(event: Stripe.Event): string {
+  return `stripe:webhook:event:${stripeAccountScope(event)}:${event.id}`;
+}
 
 /**
  * Process a Stripe webhook event and update escrow state accordingly.
@@ -31,4 +54,70 @@ export async function processStripeWebhookEvent(
   if (escrow) {
     await markFundedAuthorized(escrow.id);
   }
+}
+
+export async function POST(req: NextRequest): Promise<NextResponse> {
+  const ip = clientIpFor(req);
+  const rateLimitBudget = await redisCheckRateLimit(
+    `stripe-webhook:${ip}`,
+    STRIPE_WEBHOOK_RATE_LIMIT_PER_SECOND,
+  );
+
+  if (rateLimitBudget < 0) {
+    console.warn("[stripe-webhook] rate_limited", { ip });
+    return NextResponse.json({ error: "rate_limited" }, { status: 429 });
+  }
+
+  const signature = req.headers.get("stripe-signature");
+  if (!signature) {
+    console.warn("[stripe-webhook] missing_signature", { ip });
+    return NextResponse.json({ error: "missing_signature" }, { status: 401 });
+  }
+
+  const rawBody = await req.text();
+  const stripe = await getStripe();
+  const webhookSecret = await getStripeWebhookSecret();
+
+  let event: Stripe.Event;
+  try {
+    event = stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
+  } catch (error) {
+    console.warn("[stripe-webhook] invalid_signature", {
+      ip,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return NextResponse.json({ error: "invalid_signature" }, { status: 401 });
+  }
+
+  const dedupeKey = stripeEventDedupeKey(event);
+  const alreadyProcessed = await redisGet<{ processedAt: string }>(dedupeKey);
+  if (alreadyProcessed) {
+    console.info("[stripe-webhook] duplicate", {
+      id: event.id,
+      type: event.type,
+      account: stripeAccountScope(event),
+    });
+    return NextResponse.json({ received: true, duplicate: true });
+  }
+
+  console.info("[stripe-webhook] received", {
+    id: event.id,
+    type: event.type,
+    account: stripeAccountScope(event),
+  });
+
+  await processStripeWebhookEvent(event);
+  await redisSet(
+    dedupeKey,
+    { processedAt: new Date().toISOString() },
+    STRIPE_WEBHOOK_DEDUPE_TTL_SECONDS,
+  );
+
+  console.info("[stripe-webhook] processed", {
+    id: event.id,
+    type: event.type,
+    account: stripeAccountScope(event),
+  });
+
+  return NextResponse.json({ received: true, duplicate: false });
 }
