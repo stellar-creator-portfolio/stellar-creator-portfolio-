@@ -108,6 +108,7 @@
     "recharts": "2.15.0",
     "snarkjs": "^0.7.6",
     "sonner": "^2.0.7",
+    "stripe": "^22.3.0",
     "tailwind-merge": "^3.3.1",
     "vaul": "^1.1.2",
     "ws": "^8.18.0",
