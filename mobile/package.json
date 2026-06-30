@@ -15,8 +15,8 @@
   "dependencies": {
     "@nozbe/watermelondb":               "^0.28.0",
     "react-native-webrtc":               "^118.0.0",
-    "expo":                              "~51.0.0",
-    "expo-router":                       "~3.5.0",
+    "expo":                              "~56.0.12",
+    "expo-router":                       "~56.2.11",
     "react":                             "18.2.0",
     "react-native":                      "0.74.0",
 
@@ -26,8 +26,8 @@
     "react-native-screens":              "^3.31.0",
     "react-native-safe-area-context":   "^4.10.0",
 
-    "expo-haptics":                      "~13.0.0",
-    "expo-linear-gradient":              "~13.0.0",
+    "expo-haptics":                      "~56.0.3",
+    "expo-linear-gradient":              "~56.0.4",
 
     "yjs":                               "^13.6.18",
     "y-websocket":                       "^2.0.4",
@@ -38,7 +38,7 @@
     "react-native-reanimated":           "~3.10.0",
 
     "@signalapp/libsignal-client":       "^0.69.1",
-    "expo-secure-store":                 "~13.0.0",
+    "expo-secure-store":                 "~56.0.4",
 
     "onnxruntime-react-native":          "^1.18.0",
     "react-native-fs":                   "^2.20.0",
