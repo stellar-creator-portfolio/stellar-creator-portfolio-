@@ -28,7 +28,7 @@ jobs:
 
     steps:
       # ── Checkout ────────────────────────────────────────────────────────────
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 2   # need HEAD and HEAD~1 for diffing
 
