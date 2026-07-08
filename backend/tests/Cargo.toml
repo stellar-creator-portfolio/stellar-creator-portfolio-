@@ -18,7 +18,7 @@ path = "websocket_integration_test.rs"
 actix-web.workspace = true
 actix-rt.workspace = true
 actix-ws = "0.3"
-ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+ed25519-dalek = { version = "3.0", features = ["rand_core"] }
 futures = "0.3"
 sha2.workspace = true
 hex.workspace = true
