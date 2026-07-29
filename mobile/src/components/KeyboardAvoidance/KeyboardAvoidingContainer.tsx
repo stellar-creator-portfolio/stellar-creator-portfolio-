@@ -3,15 +3,8 @@
  * Automatically adjusts view position when keyboard appears
  */
 
-import React, { useMemo } from 'react';
-import {
-  Animated,
-  View,
-  ViewProps,
-  StyleSheet,
-  Platform,
-  KeyboardAvoidingView,
-} from 'react-native';
+import React from 'react';
+import { Animated, ViewProps, StyleSheet } from 'react-native';
 import { useKeyboardAvoidance } from '../../hooks/useKeyboardAvoidance';
 
 interface KeyboardAvoidingContainerProps extends ViewProps {
@@ -25,39 +18,20 @@ export const KeyboardAvoidingContainer: React.FC<KeyboardAvoidingContainerProps>
   style,
   ...props
 }) => {
-  const { animatedValue, isVisible } = useKeyboardAvoidance();
-
-  const animatedStyle = useMemo(
-    () => ({
-      transform: [{ translateY: animatedValue }],
-    }),
-    [animatedValue],
-  );
+  const { animatedValue } = useKeyboardAvoidance(offset);
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
+    <Animated.View
+      style={[styles.container, { transform: [{ translateY: animatedValue }] }, style]}
+      {...props}
     >
-      <Animated.View
-        style={[
-          styles.content,
-          animatedStyle,
-          style,
-        ]}
-        {...props}
-      >
-        {children}
-      </Animated.View>
-    </KeyboardAvoidingView>
+      {children}
+    </Animated.View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
-  },
-  content: {
     flex: 1,
   },
 });

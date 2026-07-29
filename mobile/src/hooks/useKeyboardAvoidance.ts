@@ -9,7 +9,6 @@ import {
   KeyboardEvent,
   Animated,
   Platform,
-  useWindowDimensions,
 } from 'react-native';
 
 export interface KeyboardMetrics {
@@ -18,22 +17,21 @@ export interface KeyboardMetrics {
   animatedValue: Animated.Value;
 }
 
-export const useKeyboardAvoidance = (): KeyboardMetrics => {
+export const useKeyboardAvoidance = (offset: number = 0): KeyboardMetrics => {
   const [isVisible, setIsVisible] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const animatedValueRef = useRef(new Animated.Value(0));
-  const { height: screenHeight } = useWindowDimensions();
 
   const animatedValue = animatedValueRef.current;
 
   useEffect(() => {
     const keyboardWillShow = (e: KeyboardEvent) => {
-      const keyboardHeight = e.endCoordinates.height;
-      setKeyboardHeight(keyboardHeight);
+      const nextKeyboardHeight = e.endCoordinates.height;
+      setKeyboardHeight(nextKeyboardHeight);
       setIsVisible(true);
 
       Animated.timing(animatedValue, {
-        toValue: -keyboardHeight,
+        toValue: -(Math.max(nextKeyboardHeight - offset, 0)),
         duration: e.duration || 250,
         useNativeDriver: false,
       }).start();
@@ -60,7 +58,7 @@ export const useKeyboardAvoidance = (): KeyboardMetrics => {
       showSubscription.remove();
       hideSubscription.remove();
     };
-  }, [animatedValue]);
+  }, [animatedValue, offset]);
 
   return {
     isVisible,
@@ -72,19 +70,7 @@ export const useKeyboardAvoidance = (): KeyboardMetrics => {
 export const useKeyboardAvoidancePosition = (
   baseOffset: number = 0,
 ): Animated.Value => {
-  const { animatedValue } = useKeyboardAvoidance();
-  const positionValueRef = useRef(new Animated.Value(baseOffset));
-  const positionValue = positionValueRef.current;
-
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(positionValue, {
-        toValue: baseOffset,
-        duration: 0,
-        useNativeDriver: false,
-      }),
-    ]).start();
-  }, [baseOffset, positionValue]);
+  const { animatedValue } = useKeyboardAvoidance(baseOffset);
 
   return animatedValue;
 };
