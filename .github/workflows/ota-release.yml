@@ -33,7 +33,7 @@ jobs:
           fetch-depth: 2   # need HEAD and HEAD~1 for diffing
 
       # ── Node / pnpm ─────────────────────────────────────────────────────────
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'npm'
