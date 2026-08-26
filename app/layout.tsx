@@ -3,6 +3,8 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { ThemeProvider } from "next-themes";
 import { LayoutProvider } from "@/components/layout-provider";
+import { OfflineQueueStatus } from "@/components/OfflineQueueStatus";
+
 import { DataLoaderProvider } from "@/app/providers/DataLoaderProvider";
 import { ErrorTrackingProvider } from "@/components/error-tracking-provider";
 import "./globals.css";
@@ -80,6 +82,8 @@ export default function RootLayout({
             </ErrorTrackingProvider>
           </DataLoaderProvider>
           <Analytics />
+          <OfflineQueueStatus />
+
         </ThemeProvider>
       </body>
     </html>
