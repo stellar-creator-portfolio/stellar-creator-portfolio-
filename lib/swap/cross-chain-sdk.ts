@@ -1,5 +1,21 @@
 import { getNetworkConfig, type NetworkName } from '@/lib/config/network';
 import { prisma } from '@/lib/prisma';
+import crypto from 'crypto';
+
+const QUOTE_SECRET = process.env.QUOTE_SECRET || 'dev-quote-secret-key';
+
+function signQuote(quote: Omit<SwapQuote, 'signature'>): string {
+  const payload = JSON.stringify({
+    fromChain: quote.fromChain,
+    toChain: quote.toChain,
+    fromAmount: quote.fromAmount,
+    toAmount: quote.toAmount,
+    slippageBps: quote.slippageBps,
+    validUntil: quote.validUntil,
+    routeId: quote.route.id
+  });
+  return crypto.createHmac('sha256', QUOTE_SECRET).update(payload).digest('hex');
+}
 
 export type ChainId = 'stellar' | 'ethereum' | 'polygon' | 'arbitrum';
 
@@ -35,6 +51,7 @@ export interface SwapQuote {
   gas: GasEstimate;
   slippageBps: number;
   validUntil: number;
+  signature?: string;
 }
 
 export interface SwapReceipt {
@@ -216,7 +233,7 @@ export async function getSwapQuote(
   const feeTotal = route.hops.reduce((acc, h) => acc + h.feeBps, 0);
   const toAmount = (amount * (1 - feeTotal / 10_000) * (1 - effectiveSlippage / 10_000)).toFixed(4);
 
-  return {
+  const quoteBase = {
     fromChain,
     toChain,
     fromAmount,
@@ -226,12 +243,20 @@ export async function getSwapQuote(
     slippageBps: effectiveSlippage,
     validUntil: Date.now() + QUOTE_TTL_MS,
   };
+  return {
+    ...quoteBase,
+    signature: signQuote(quoteBase),
+  };
 }
 
 export async function executeSwap(
   quote: SwapQuote,
   senderAddress: string,
 ): Promise<SwapReceipt> {
+  if (!quote.signature || quote.signature !== signQuote(quote)) {
+    throw new Error('Invalid quote signature or tampered quote');
+  }
+
   if (Date.now() > quote.validUntil) {
     throw new QuoteExpiredError();
   }
