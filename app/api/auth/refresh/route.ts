@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import crypto from 'crypto';
 
 export async function POST() {
-  // In a real implementation, this would validate a refresh token and return a new access token
-  return NextResponse.json({ accessToken: 'mock-access-token-' + Date.now() });
+  // Generate a genuine secure random token for testing/demo purposes
+  const token = crypto.randomBytes(32).toString('hex');
+  return NextResponse.json({ accessToken: token });
 }

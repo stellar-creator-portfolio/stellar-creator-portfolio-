@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { enqueue, flush, listQueued, clearStaleMutations, refreshAuthToken, OfflineMutation } from '../lib/sw/offline-queue';
 
+// Use actual crypto randomUUID if available, else mock with standard structure
+if (!globalThis.crypto) {
+  globalThis.crypto = require('crypto').webcrypto;
+}
+
 // Mock IndexedDB
 const mockIndexedDB = () => {
   let store: any = {};
@@ -52,7 +57,6 @@ describe('Offline Queue', () => {
   beforeEach(() => {
     vi.stubGlobal('indexedDB', mockIndexedDB());
     vi.stubGlobal('fetch', vi.fn());
-    vi.stubGlobal('crypto', { randomUUID: () => 'uuid-' + Math.random() });
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -65,9 +69,67 @@ describe('Offline Queue', () => {
       headers: { 'Authorization': 'Bearer test', 'Content-Type': 'application/json' },
       body: '{}'
     });
-    // Can't directly assert since store is private to mock, but we can list queued
+    
     const queued = await listQueued();
     expect(queued[0].headers['Authorization']).toBeUndefined();
     expect(queued[0].requiresAuth).toBe(true);
+    expect(queued[0].mutationId).toBeDefined();
   });
 });
+
+  it('handles 401 and refresh cycle', async () => {
+    let callCount = 0;
+    vi.mocked(fetch).mockImplementation(async (url: string | URL | Request) => {
+      const u = url.toString();
+      if (u.includes('/api/auth/refresh')) {
+        return { ok: true, json: async () => ({ accessToken: 'new-token' }) } as Response;
+      }
+      
+      callCount++;
+      if (callCount === 1) {
+        return { ok: false, status: 401 } as Response;
+      }
+      return { ok: true, status: 200 } as Response;
+    });
+
+    await enqueue({
+      url: '/api/data',
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer old', 'Content-Type': 'application/json' },
+      body: '{}'
+    });
+
+    const result = await flush();
+    expect(result.replayed).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(result.authFailed).toBe(0);
+    
+    const queued = await listQueued();
+    expect(queued.length).toBe(0);
+  });
+
+  it('handles 5 retry backoff limit', async () => {
+    vi.mocked(fetch).mockImplementation(async (url: string | URL | Request) => {
+      if (url.toString().includes('/api/auth/refresh')) {
+        return { ok: true, json: async () => ({ accessToken: 'new-token' }) } as Response;
+      }
+      return { ok: false, status: 500 } as Response;
+    });
+
+    await enqueue({
+      url: '/api/fail',
+      method: 'POST',
+      headers: {},
+      body: '{}'
+    });
+
+    // Simulate 5 flushes
+    for (let i = 0; i < 5; i++) {
+      await flush();
+    }
+
+    const queued = await listQueued();
+    expect(queued.length).toBe(1);
+    expect(queued[0].status).toBe('failed');
+    expect(queued[0].retryCount).toBe(5);
+  });
