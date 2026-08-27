@@ -24,7 +24,7 @@ repository = "https://github.com/stellar/stellar-platform"
 
 [workspace.dependencies]
 # Soroban SDK
-soroban-sdk = "21.7.7"
+soroban-sdk = "23.5.3"
 soroban-spec-tools = "21.5"
 
 # Web & HTTP
