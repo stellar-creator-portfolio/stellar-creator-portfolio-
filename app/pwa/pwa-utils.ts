@@ -77,6 +77,10 @@ class PWAManager {
       );
 
       this.serviceWorkerRegistration = registration;
+      navigator.serviceWorker.addEventListener("message", (event) => {
+        if (event.data === "SW_ACTIVATED") clearStaleMutations();
+      });
+
       console.log('[PWA] Service Worker registered:', registration);
 
       // Check for updates periodically

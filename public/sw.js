@@ -1,20 +1,6 @@
-/**
- * Issue #630 — Service Worker Advanced Request Interception
- *
- * Routing heuristics:
- *   /api/*              → network-first, offline mock on failure
- *   /_next/static/*     → cache-first (immutable assets)
- *   images / fonts      → cache-first with stale-while-revalidate
- *   navigate (HTML)     → network-first with /offline.html fallback
- *
- * Offline mutations are stored in IndexedDB and replayed via Background Sync
- * when connectivity is restored (sync tag: "stellar-mutation-queue").
- */
-
-const CACHE_VERSION = 'v1';
-const STATIC_CACHE = `${CACHE_VERSION}-static`;
-const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
-const IMAGE_CACHE = `${CACHE_VERSION}-images`;
+const STATIC_CACHE = 'stellar-static-v1';
+const DYNAMIC_CACHE = 'stellar-dynamic-v1';
+const IMAGE_CACHE = 'stellar-images-v1';
 const ALL_CACHES = [STATIC_CACHE, DYNAMIC_CACHE, IMAGE_CACHE];
 
 const STATIC_PRECACHE = [
@@ -22,8 +8,6 @@ const STATIC_PRECACHE = [
   '/offline.html',
   '/manifest.json',
 ];
-
-// ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -49,16 +33,12 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// ── Fetch interception ────────────────────────────────────────────────────────
-
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Only intercept same-origin requests
   if (url.origin !== self.location.origin) return;
 
-  // Skip non-GET mutations — they go through the offline queue path instead
   if (request.method !== 'GET') {
     event.respondWith(handleMutationRequest(request));
     return;
@@ -79,8 +59,6 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(staleWhileRevalidate(request, DYNAMIC_CACHE));
   }
 });
-
-// ── Routing strategies ────────────────────────────────────────────────────────
 
 async function networkFirstWithMock(request) {
   try {
@@ -133,12 +111,6 @@ async function navigationHandler(request) {
   }
 }
 
-// ── Offline API mocking ───────────────────────────────────────────────────────
-
-/**
- * Returns a plausible mock response for known API endpoints so the UI
- * degrades gracefully rather than breaking completely while offline.
- */
 function buildOfflineMock(url) {
   const body = getMockBody(url.pathname);
   return new Response(JSON.stringify(body), {
@@ -168,13 +140,17 @@ function getMockBody(pathname) {
 
 // ── Mutation queue (non-GET requests while offline) ───────────────────────────
 
-const DB_NAME = 'stellar-sw-queue';
+const DB_NAME = 'stellar-offline-queue';
 const STORE_NAME = 'mutations';
 
 function openQueueDB() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(STORE_NAME, { autoIncrement: true });
+    const req = indexedDB.open(DB_NAME, 2);
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains(STORE_NAME)) {
+        req.result.createObjectStore(STORE_NAME, { keyPath: 'mutationId' });
+      }
+    };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
@@ -183,14 +159,27 @@ function openQueueDB() {
 async function enqueueOfflineMutation(request) {
   const db = await openQueueDB();
   const body = await request.text();
+  const headersObj = {};
+  for (const [key, value] of request.headers.entries()) {
+    headersObj[key] = value;
+  }
+  
+  const requiresAuth = !!headersObj['authorization'];
+  delete headersObj['authorization'];
+  delete headersObj['Authorization'];
+
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).add({
+    tx.objectStore(STORE_NAME).put({
+      mutationId: crypto.randomUUID(),
       url: request.url,
       method: request.method,
-      headers: [...request.headers.entries()],
+      headers: headersObj,
       body,
       timestamp: Date.now(),
+      requiresAuth,
+      retryCount: 0,
+      status: 'pending'
     });
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
@@ -217,21 +206,94 @@ self.addEventListener('sync', (event) => {
   }
 });
 
+function calculateBackoff(retryCount) {
+  const base = 1000 * Math.pow(2, retryCount);
+  const jitter = Math.floor(Math.random() * 1000);
+  return Math.min(base + jitter, 32000);
+}
+
+async function refreshAuthToken() {
+  try {
+    const res = await fetch('/api/auth/refresh', { method: 'POST' });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.accessToken;
+  } catch (e) {
+    return null;
+  }
+}
+
 async function replayMutationQueue() {
   const db = await openQueueDB();
   const mutations = await getAllMutations(db);
 
-  for (const { id, record } of mutations) {
+  for (const record of mutations) {
+    if (record.status === 'success' || record.status === 'failed') continue;
+
     try {
-      const headers = new Headers(record.headers);
-      await fetch(record.url, {
+      record.status = 'replaying';
+      await updateMutation(db, record);
+
+      let headers = new Headers(record.headers);
+      
+      if (record.requiresAuth) {
+        const token = await refreshAuthToken();
+        if (token) {
+          headers.set('Authorization', `Bearer ${token}`);
+        } else {
+          record.status = 'pending';
+          await updateMutation(db, record);
+          continue;
+        }
+      }
+
+      const res = await fetch(record.url, {
         method: record.method,
         headers,
         body: record.body || undefined,
       });
-      await deleteMutation(db, id);
-    } catch {
-      // Leave failed mutations in the queue to retry on the next sync event.
+
+      if (res.status === 401 || res.status === 403) {
+        const token = await refreshAuthToken();
+        if (token) {
+          headers.set('Authorization', `Bearer ${token}`);
+          const retryRes = await fetch(record.url, {
+            method: record.method,
+            headers,
+            body: record.body || undefined,
+          });
+          if (!retryRes.ok) throw new Error(`HTTP ${retryRes.status}`);
+        } else {
+          record.status = 'pending';
+          await updateMutation(db, record);
+          continue;
+        }
+      } else if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      await deleteMutation(db, record.mutationId);
+    } catch (e) {
+      record.retryCount = (record.retryCount || 0) + 1;
+      if (record.retryCount >= 5) {
+        record.status = 'failed';
+        record.failureReason = e.message || 'Unknown error';
+        await updateMutation(db, record);
+        
+        // Notify clients
+        const clients = await self.clients.matchAll();
+        for (const client of clients) {
+          client.postMessage({
+            type: 'MUTATION_FAILED',
+            mutationId: record.mutationId,
+            reason: record.failureReason
+          });
+        }
+      } else {
+        record.status = 'pending';
+        await updateMutation(db, record);
+        await new Promise(r => setTimeout(r, calculateBackoff(record.retryCount)));
+      }
     }
   }
 }
@@ -244,13 +306,22 @@ function getAllMutations(db) {
     cursor.onsuccess = (e) => {
       const cur = e.target.result;
       if (cur) {
-        results.push({ id: cur.key, record: cur.value });
+        results.push(cur.value);
         cur.continue();
       } else {
         resolve(results);
       }
     };
     cursor.onerror = () => reject(cursor.error);
+  });
+}
+
+function updateMutation(db, record) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(record);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
   });
 }
 
@@ -271,3 +342,22 @@ function fetchWithTimeout(request, ms) {
     new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
   ]);
 }
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches
+      .keys()
+      .then((names) =>
+        Promise.all(
+          names
+            .filter((n) => !ALL_CACHES.includes(n))
+            .map((n) => caches.delete(n)),
+        ),
+      )
+      .then(() => self.clients.claim())
+      .then(() => {
+        return self.clients.matchAll().then(clients => {
+          clients.forEach(client => client.postMessage("SW_ACTIVATED"));
+        });
+      })
+  );
+});
