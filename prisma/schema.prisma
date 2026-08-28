@@ -716,3 +716,24 @@ model ErrorLog {
   @@index([environment])
 }
 
+
+// ── Cross Chain Swaps ────────────────────────────────────────────────────
+model CrossChainSwap {
+  id            String   @id @default(cuid())
+  routeId       String
+  senderAddress String
+  fromChain     String
+  toChain       String
+  fromAmount    String
+  toAmount      String
+  slippageBps   Int
+  status        String   @default("pending") // pending, completed, failed
+  fromTxHash    String?
+  bridgeTxHash  String?
+  toTxHash      String?
+  amountOut     String?
+  completedAt   DateTime?
+  createdAt     DateTime @default(now())
+
+  @@unique([routeId, senderAddress, id])
+}
