@@ -46,9 +46,13 @@ export interface TransactionOptions {
 /**
  * Execute a transaction with specified isolation level
  * Automatically retries on deadlock
+ * Supports both signatures:
+ *   executeTransaction(() => Promise<T>)
+ *   executeTransaction((tx) => Promise<T>)
+ * where tx is the Prisma transaction client, for payout-integrity saga
  */
 export async function executeTransaction<T>(
-  fn: () => Promise<T>,
+  fn: (tx?: any) => Promise<T>,
   options: TransactionOptions = {},
 ): Promise<T> {
   const {
@@ -74,7 +78,8 @@ export async function executeTransaction<T>(
             await tx.$executeRawUnsafe(`SET statement_timeout = ${timeout}`);
           }
 
-          return await fn();
+          // Pass tx to fn if it expects a param (dispute saga), otherwise call without
+          return await (fn as any)(tx);
         },
         {
           timeout,

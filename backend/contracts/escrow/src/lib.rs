@@ -1665,7 +1665,7 @@ mod tests {
         let env = Env::default();
         let (_, token, payer, payee) = setup(&env, 1000);
         let contract = EscrowContractClient::new(&env, &env.register_contract(None, EscrowContract));
-        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion);
+        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion, &None, &None);
         contract.dispute_escrow(&payer, &id);
         // Both release and refund must be blocked while disputed
         let cid = env.register_contract(None, EscrowContract);
@@ -1681,7 +1681,7 @@ mod tests {
         let env = Env::default();
         let (_, token, payer, payee) = setup(&env, 1000);
         let contract = EscrowContractClient::new(&env, &env.register_contract(None, EscrowContract));
-        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion);
+        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion, &None, &None);
         contract.dispute_escrow(&payer, &id);
         contract.release_funds(&payee, &id);
     }
@@ -1692,7 +1692,7 @@ mod tests {
         let env = Env::default();
         let (_, token, payer, payee) = setup(&env, 1000);
         let contract = EscrowContractClient::new(&env, &env.register_contract(None, EscrowContract));
-        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion);
+        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion, &None, &None);
         contract.dispute_escrow(&payer, &id);
         contract.refund_escrow(&payer, &id);
     }
@@ -1702,7 +1702,7 @@ mod tests {
         let env = Env::default();
         let (_, token, payer, payee) = setup(&env, 1000);
         let contract = EscrowContractClient::new(&env, &env.register_contract(None, EscrowContract));
-        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion);
+        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion, &None, &None);
         contract.add_milestone(&payer, &id, &0, &Symbol::new(&env, "m1"), &400);
         contract.dispute_escrow(&payer, &id);
         // milestone release requires Active, should panic
@@ -1714,7 +1714,7 @@ mod tests {
         let env = Env::default();
         let (_, token, payer, payee) = setup(&env, 1000);
         let contract = EscrowContractClient::new(&env, &env.register_contract(None, EscrowContract));
-        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion);
+        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion, &None, &None);
         contract.add_milestone(&payer, &id, &0, &Symbol::new(&env, "m1"), &400);
         contract.dispute_escrow(&payer, &id);
         contract.release_milestone(&payer, &id, &0);
@@ -1730,7 +1730,7 @@ mod tests {
         let admin = Address::generate(&env);
         contract.set_admin(&admin);
         env.ledger().set_timestamp(1000);
-        let id = contract.deposit(&1u64, &payer, &payee, &2000, &token, &ReleaseCondition::OnCompletion);
+        let id = contract.deposit(&1u64, &payer, &payee, &2000, &token, &ReleaseCondition::OnCompletion, &None, &None);
         // net amount = 2000 - 50 (2.5% capped? 2000*250/10000=50) =1950
         assert_eq!(contract.get_escrow(&id).amount, 1950);
         contract.dispute_escrow(&payer, &id);
@@ -1760,7 +1760,7 @@ mod tests {
         let contract = EscrowContractClient::new(&env, &env.register_contract(None, EscrowContract));
         let admin = Address::generate(&env);
         contract.set_admin(&admin);
-        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion);
+        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion, &None, &None);
         contract.dispute_escrow(&payer, &id);
         contract.resolve_dispute_split(&admin, &id, &500, &400); // sum 900 != 975
     }
@@ -1774,7 +1774,7 @@ mod tests {
         let admin = Address::generate(&env);
         contract.set_admin(&admin);
         env.ledger().set_timestamp(5000);
-        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion);
+        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion, &None, &None);
         contract.dispute_escrow(&payer, &id);
         contract.resolve_dispute(&admin, &id, &true);
         // try finalize immediately without warping
@@ -1790,7 +1790,7 @@ mod tests {
         let admin = Address::generate(&env);
         contract.set_admin(&admin);
         env.ledger().set_timestamp(100);
-        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion);
+        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion, &None, &None);
         contract.dispute_escrow(&payer, &id);
         contract.resolve_dispute(&admin, &id, &false);
         env.ledger().set_timestamp(100 + APPEAL_WINDOW_SECS + 10);
@@ -1806,7 +1806,7 @@ mod tests {
         let admin = Address::generate(&env);
         contract.set_admin(&admin);
         env.ledger().set_timestamp(1000);
-        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion);
+        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion, &None, &None);
         contract.dispute_escrow(&payer, &id);
         contract.resolve_dispute(&admin, &id, &true);
         // appeal within window by payee
@@ -1832,7 +1832,7 @@ mod tests {
         let admin = Address::generate(&env);
         contract.set_admin(&admin);
         env.ledger().set_timestamp(100);
-        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion);
+        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion, &None, &None);
         contract.dispute_escrow(&payer, &id);
         contract.resolve_dispute(&admin, &id, &true);
         env.ledger().set_timestamp(100 + APPEAL_WINDOW_SECS + 1);
@@ -1847,7 +1847,7 @@ mod tests {
         let contract = EscrowContractClient::new(&env, &env.register_contract(None, EscrowContract));
         let admin = Address::generate(&env);
         contract.set_admin(&admin);
-        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion);
+        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion, &None, &None);
         contract.dispute_escrow(&payer, &id);
         contract.resolve_dispute(&admin, &id, &true);
         let stranger = Address::generate(&env);
@@ -1859,7 +1859,7 @@ mod tests {
         let env = Env::default();
         let (_, token, payer, payee) = setup(&env, 1000);
         let contract = EscrowContractClient::new(&env, &env.register_contract(None, EscrowContract));
-        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion);
+        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion, &None, &None);
         let hash = BytesN::from_array(&env, &[1u8; 32]);
         contract.dispute_escrow_with_evidence(&payer, &id, &hash.clone());
         let stored = contract.get_dispute_evidence(&id).unwrap();
@@ -1879,7 +1879,7 @@ mod tests {
         let env = Env::default();
         let (_, token, payer, payee) = setup(&env, 1000);
         let contract = EscrowContractClient::new(&env, &env.register_contract(None, EscrowContract));
-        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion);
+        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion, &None, &None);
         contract.dispute_escrow(&payer, &id);
         let stranger = Address::generate(&env);
         let hash = BytesN::from_array(&env, &[9u8; 32]);
@@ -1894,7 +1894,7 @@ mod tests {
         let admin = Address::generate(&env);
         contract.set_admin(&admin);
         env.ledger().set_timestamp(1000);
-        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion);
+        let id = contract.deposit(&1u64, &payer, &payee, &1000, &token, &ReleaseCondition::OnCompletion, &None, &None);
         contract.dispute_escrow(&payer, &id);
         assert!(!contract.is_appeal_window_active(&id));
         contract.resolve_dispute(&admin, &id, &true);
