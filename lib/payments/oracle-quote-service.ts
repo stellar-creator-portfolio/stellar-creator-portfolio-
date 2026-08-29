@@ -213,6 +213,34 @@ export function verifyLockedOracleQuote(params: {
   return derivedMinimum
 }
 
+/** Resolve fiat funding exclusively from a signed, server-locked valuation. */
+export function resolveOracleEscrowFunding(params: {
+  quote: LockedOracleQuote
+  quoteSigningSecret: string
+  bountyId: string
+  usdAmountMicro: string
+  clientMinXlmOutStroops: string
+  nowSeconds?: number
+}): { amountStroops: string; assetContract: string; quoteId: string } {
+  const lockedMinimum = verifyLockedOracleQuote({
+    quote: params.quote,
+    secret: params.quoteSigningSecret,
+    expectedBountyId: params.bountyId,
+    expectedUsdAmountMicro: params.usdAmountMicro,
+    clientMinXlmOutStroops: params.clientMinXlmOutStroops,
+    nowSeconds: params.nowSeconds,
+  })
+  const amountStroops =
+    BigInt(params.clientMinXlmOutStroops) > BigInt(lockedMinimum)
+      ? params.clientMinXlmOutStroops
+      : lockedMinimum
+  return {
+    amountStroops,
+    assetContract: params.quote.assetContract,
+    quoteId: params.quote.quoteId,
+  }
+}
+
 /** Fetch `lock_price`/`value_in_tokens` output from the trusted contract adapter. */
 export async function fetchContractValuation(
   usdAmountMicro: string,

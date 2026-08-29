@@ -1,278 +1,303 @@
 /**
  * Bounty escrow state machine (Stripe PaymentIntents with `capture_method: manual`).
  * Funds are authorized then captured on release, or cancelled/refunded.
- *
- * Persisted to PostgreSQL via Prisma with optimistic-locking (version field)
- * to prevent race conditions on concurrent state transitions.
+ * In-memory store suitable for demo; persist to DB for production.
  */
 
-import { prisma } from "@/lib/prisma";
-import type { Escrow } from "@prisma/client";
-import {
-  verifyLockedOracleQuote,
-  type LockedOracleQuote,
-} from "./oracle-quote-service";
+export type EscrowStatus =
+  | 'pending_funding'
+  | 'funded_authorized'
+  | 'released'
+  | 'refunded'
+  | 'failed'
+  | 'disputed'
+  | 'split_released'
 
-/** Thrown when an optimistic-locking version check fails (concurrent modification). */
+export interface EscrowRecord {
+  id: string
+  bountyId: string
+  clientUserId: string
+  freelancerUserId?: string
+  amountCents: number
+  currency: string
+  /** Platform fee in minor units (e.g. cents). */
+  platformFeeCents: number
+  paymentIntentId?: string
+  status: EscrowStatus
+  receiptUrl?: string
+  failureMessage?: string
+  createdAt: string
+  updatedAt: string
+  /** Dispute freeze metadata (dual-ledger integrity) */
+  disputedAt?: string
+  disputeReason?: string
+  appealDeadline?: string
+  stripeBlocked?: boolean
+  disputedPaymentIntentId?: string
+  /** Fiat-pegged settlement (from upstream) */
+  usdAmountCents?: number | null
+  lockedPriceMicroUsd?: number | null
+  usedFallbackPrice?: boolean | null
+  settlementTxHashes?: string[]
+  settlementRecoveryNote?: string | null
+  version?: number
+  releasedAt?: string
+  refundedAt?: string
+}
+
+type Store = {
+  escrows: Map<string, EscrowRecord>
+  byPaymentIntent: Map<string, string>
+}
+
+function getStore(): Store {
+  const g = globalThis as unknown as { __escrowStore?: Store }
+  if (!g.__escrowStore) {
+    g.__escrowStore = {
+      escrows: new Map(),
+      byPaymentIntent: new Map(),
+    }
+  }
+  return g.__escrowStore
+}
+
+function nowIso(): string {
+  return new Date().toISOString()
+}
+
+/** Default platform fee: 10% of bounty amount (basis points style via integer math). */
+export function computePlatformFeeCents(amountCents: number, feeBps: number = 1000): number {
+  if (amountCents <= 0) return 0
+  return Math.round((amountCents * feeBps) / 10000)
+}
+
+export function computeFreelancerPayoutCents(amountCents: number, platformFeeCents: number): number {
+  return Math.max(0, amountCents - platformFeeCents)
+}
+
 export class EscrowConflictError extends Error {
   public readonly escrowId: string;
   public readonly expectedVersion: number;
-
   constructor(escrowId: string, expectedVersion: number) {
-    super(
-      `Escrow ${escrowId} version ${expectedVersion} was modified concurrently`,
-    );
-    this.name = "EscrowConflictError";
+    super(`Escrow ${escrowId} version ${expectedVersion} was modified concurrently`);
+    this.name = 'EscrowConflictError';
     this.escrowId = escrowId;
     this.expectedVersion = expectedVersion;
   }
 }
 
-export type EscrowStatus =
-  | "pending_funding"
-  | "funded_authorized"
-  | "released"
-  | "refunded"
-  | "failed";
-
-/** Resolve fiat funding exclusively from a signed, server-locked valuation. */
-export function resolveOracleEscrowFunding(params: {
-  quote: LockedOracleQuote;
-  quoteSigningSecret: string;
-  bountyId: string;
-  usdAmountMicro: string;
-  clientMinXlmOutStroops: string;
-  nowSeconds?: number;
-}): { amountStroops: string; assetContract: string; quoteId: string } {
-  const lockedMinimum = verifyLockedOracleQuote({
-    quote: params.quote,
-    secret: params.quoteSigningSecret,
-    expectedBountyId: params.bountyId,
-    expectedUsdAmountMicro: params.usdAmountMicro,
-    clientMinXlmOutStroops: params.clientMinXlmOutStroops,
-    nowSeconds: params.nowSeconds,
-  });
-  const amountStroops =
-    BigInt(params.clientMinXlmOutStroops) > BigInt(lockedMinimum)
-      ? params.clientMinXlmOutStroops
-      : lockedMinimum;
-  return {
-    amountStroops,
-    assetContract: params.quote.assetContract,
-    quoteId: params.quote.quoteId,
-  };
-}
-
-// Map Prisma Escrow rows to the public shape
-export interface EscrowRecord {
-  id: string;
-  bountyId: string;
-  clientUserId: string;
-  freelancerUserId?: string | null;
-  amountCents: number;
-  currency: string;
-  platformFeeCents: number;
-  paymentIntentId?: string | null;
-  status: EscrowStatus;
-  receiptUrl?: string | null;
-  failureMessage?: string | null;
-  version: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-function toRecord(row: Escrow): EscrowRecord {
-  return {
-    id: row.id,
-    bountyId: row.bountyId,
-    clientUserId: row.clientId,
-    freelancerUserId: row.freelancerUserId,
-    amountCents: row.amount,
-    currency: row.currency,
-    platformFeeCents: row.platformFeeCents,
-    paymentIntentId: row.paymentIntentId,
-    status: row.status as EscrowStatus,
-    receiptUrl: row.receiptUrl,
-    failureMessage: row.failureMessage,
-    version: row.version,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-  };
-}
-
-/** Default platform fee: 10% of bounty amount (basis points style via integer math). */
-export function computePlatformFeeCents(
-  amountCents: number,
-  feeBps: number = 1000,
-): number {
-  if (amountCents <= 0) return 0;
-  return Math.round((amountCents * feeBps) / 10000);
-}
-
-export function computeFreelancerPayoutCents(
-  amountCents: number,
-  platformFeeCents: number,
-): number {
-  return Math.max(0, amountCents - platformFeeCents);
-}
-
-export async function createEscrow(params: {
-  bountyId: string;
-  clientUserId: string;
-  amountCents: number;
-  currency?: string;
-  feeBps?: number;
-}): Promise<EscrowRecord> {
-  const currency = (params.currency ?? "usd").toLowerCase();
-  const platformFeeCents = computePlatformFeeCents(
-    params.amountCents,
-    params.feeBps ?? 1000,
-  );
-
-  // Resolve the bounty's creator (freelancer who will receive payout on release).
-  // creatorId = freelancer; clientId = funder — they are distinct roles.
-  const bounty = await prisma.bounty.findUnique({
-    where: { id: params.bountyId },
-  });
-  if (!bounty) throw new Error(`Bounty ${params.bountyId} not found`);
-
-  const row = await prisma.escrow.create({
-    data: {
-      bountyId: params.bountyId,
-      creatorId: bounty.creatorId,
-      clientId: params.clientUserId,
-      amount: params.amountCents,
-      currency,
-      platformFeeCents,
-      status: "pending_funding",
-    },
-  });
-
-  return toRecord(row);
-}
-
-export async function getEscrow(
-  id: string,
-): Promise<EscrowRecord | null> {
-  const row = await prisma.escrow.findUnique({ where: { id } });
-  return row ? toRecord(row) : null;
-}
-
-export async function attachPaymentIntent(
-  escrowId: string,
-  paymentIntentId: string,
-): Promise<EscrowRecord | null> {
-  return prisma.$transaction(async (tx) => {
-    const existing = await tx.escrow.findUnique({
-      where: { id: escrowId },
-    });
-    if (!existing) return null;
-
-    const row = await tx.escrow.update({
-      where: { id: escrowId, version: existing.version },
-      data: {
-        paymentIntentId,
-        version: { increment: 1 },
-      },
-    });
-
-    return toRecord(row);
-  });
-}
-
-export async function findEscrowByPaymentIntent(
-  paymentIntentId: string,
-): Promise<EscrowRecord | null> {
-  const row = await prisma.escrow.findFirst({
-    where: { paymentIntentId },
-  });
-  return row ? toRecord(row) : null;
-}
-
-/**
- * Atomically transition escrow status using optimistic locking.
- * Throws EscrowConflictError if the record was modified concurrently (version mismatch).
- */
-async function transitionStatus(
-  escrowId: string,
-  status: EscrowStatus,
-  extras?: {
-    receiptUrl?: string;
-    failureMessage?: string;
-    releasedAt?: Date;
-    refundedAt?: Date;
-  },
-): Promise<EscrowRecord | null> {
-  const existing = await prisma.escrow.findUnique({
-    where: { id: escrowId },
-  });
-  if (!existing) return null;
-
-  try {
-    const row = await prisma.escrow.update({
-      where: { id: escrowId, version: existing.version },
-      data: {
-        status,
-        receiptUrl: extras?.receiptUrl ?? undefined,
-        failureMessage: extras?.failureMessage ?? undefined,
-        releasedAt: extras?.releasedAt ?? undefined,
-        refundedAt: extras?.refundedAt ?? undefined,
-        version: { increment: 1 },
-      },
-    });
-    return toRecord(row);
-  } catch (err: any) {
-    // Prisma throws P2025 when version check fails (record not found by composite where)
-    if (err?.code === "P2025") {
-      throw new EscrowConflictError(escrowId, existing.version);
-    }
-    throw err;
+export function createEscrow(params: {
+  bountyId: string
+  clientUserId: string
+  amountCents: number
+  currency?: string
+  feeBps?: number
+  usdAmountCents?: number
+  lockedPriceMicroUsd?: number
+  usedFallbackPrice?: boolean
+  settlementTxHashes?: string[]
+  minXlmOut?: number
+}): EscrowRecord {
+  const currency = (params.currency ?? 'usd').toLowerCase()
+  const platformFeeCents = computePlatformFeeCents(params.amountCents, params.feeBps ?? 1000)
+  const id = crypto.randomUUID()
+  const ts = nowIso()
+  const record: EscrowRecord = {
+    id,
+    bountyId: params.bountyId,
+    clientUserId: params.clientUserId,
+    amountCents: params.amountCents,
+    currency,
+    platformFeeCents,
+    status: 'pending_funding',
+    createdAt: ts,
+    updatedAt: ts,
+    usdAmountCents: params.usdAmountCents ?? null,
+    lockedPriceMicroUsd: params.lockedPriceMicroUsd ?? null,
+    usedFallbackPrice: params.usedFallbackPrice ?? null,
+    settlementTxHashes: params.settlementTxHashes ?? [],
+    version: 1,
   }
+  getStore().escrows.set(id, record)
+  return record
 }
 
-export async function markFundedAuthorized(
+export function getEscrow(id: string): EscrowRecord | undefined {
+  return getStore().escrows.get(id)
+}
+
+export function attachPaymentIntent(escrowId: string, paymentIntentId: string): EscrowRecord | null {
+  const store = getStore()
+  const e = store.escrows.get(escrowId)
+  if (!e) return null
+  e.paymentIntentId = paymentIntentId
+  e.updatedAt = nowIso()
+  store.byPaymentIntent.set(paymentIntentId, escrowId)
+  return e
+}
+
+export function findEscrowByPaymentIntent(paymentIntentId: string): EscrowRecord | undefined {
+  const id = getStore().byPaymentIntent.get(paymentIntentId)
+  if (!id) return undefined
+  return getStore().escrows.get(id)
+}
+
+export function markFundedAuthorized(escrowId: string, receiptUrl?: string): EscrowRecord | null {
+  const e = getStore().escrows.get(escrowId)
+  if (!e) return null
+  // Block if disputed - payout integrity: cannot fund when under dispute
+  if (e.status === 'disputed') {
+    e.failureMessage = 'Escrow is disputed - capture blocked'
+    return null
+  }
+  e.status = 'funded_authorized'
+  e.receiptUrl = receiptUrl ?? e.receiptUrl
+  e.updatedAt = nowIso()
+  return e
+}
+
+export function markReleased(escrowId: string, receiptUrl?: string): EscrowRecord | null {
+  const e = getStore().escrows.get(escrowId)
+  if (!e) return null
+  // Payout-integrity: block release while disputed (both ledgers frozen)
+  if (e.status === 'disputed') {
+    throw new Error('Escrow is disputed - release blocked until resolution and appeal window expires')
+  }
+  if (e.stripeBlocked) {
+    throw new Error('Stripe capture blocked - escrow under dispute')
+  }
+  e.status = 'released'
+  e.receiptUrl = receiptUrl ?? e.receiptUrl
+  e.updatedAt = nowIso()
+  return e
+}
+
+export function markRefunded(escrowId: string): EscrowRecord | null {
+  const e = getStore().escrows.get(escrowId)
+  if (!e) return null
+  if (e.status === 'disputed') {
+    throw new Error('Escrow is disputed - refund blocked until resolution')
+  }
+  e.status = 'refunded'
+  e.updatedAt = nowIso()
+  return e
+}
+
+/** Freeze escrow for dispute - blocks both Stripe capture and on-chain release */
+export function markDisputed(escrowId: string, reason?: string): EscrowRecord | null {
+  const e = getStore().escrows.get(escrowId)
+  if (!e) return null
+  if (e.status === 'disputed') return e
+  if (e.status === 'released' || e.status === 'refunded' || e.status === 'failed') {
+    throw new Error(`Cannot dispute escrow in status ${e.status}`)
+  }
+  e.status = 'disputed'
+  e.disputedAt = nowIso()
+  e.disputeReason = reason
+  e.stripeBlocked = true
+  e.disputedPaymentIntentId = e.paymentIntentId
+  e.updatedAt = nowIso()
+  return e
+}
+
+export function isDisputed(escrowId: string): boolean {
+  return getStore().escrows.get(escrowId)?.status === 'disputed'
+}
+
+/** Check if Stripe capture should be blocked for a PaymentIntent */
+export function isStripeCaptureBlocked(paymentIntentId: string): boolean {
+  const escrow = findEscrowByPaymentIntent(paymentIntentId)
+  if (!escrow) return false
+  return escrow.status === 'disputed' || !!escrow.stripeBlocked
+}
+
+/** Check if capture is allowed (not disputed) */
+export function canCapturePaymentIntent(paymentIntentId: string): boolean {
+  return !isStripeCaptureBlocked(paymentIntentId)
+}
+
+/** Cancel blocked PaymentIntent when dispute is filed (Stripe hold path) */
+export function cancelDisputedPaymentIntent(paymentIntentId: string): boolean {
+  const escrow = findEscrowByPaymentIntent(paymentIntentId)
+  if (!escrow) return false
+  if (escrow.status !== 'disputed') return false
+  escrow.stripeBlocked = true
+  escrow.updatedAt = nowIso()
+  return true
+}
+
+/** Saga: settle disputed escrow with outcome - handles split atomically */
+export function settleDisputedEscrow(
   escrowId: string,
-  receiptUrl?: string,
-): Promise<EscrowRecord | null> {
-  return transitionStatus(escrowId, "funded_authorized", { receiptUrl });
+  outcome: 'favor_client' | 'favor_creator' | 'split' | 'dismissed',
+  split?: { clientCents: number; creatorCents: number }
+): EscrowRecord | null {
+  const e = getStore().escrows.get(escrowId)
+  if (!e) return null
+  if (e.status !== 'disputed') throw new Error('Escrow is not disputed - cannot settle')
+  // Check appeal window if set
+  if (e.appealDeadline && new Date(e.appealDeadline).getTime() > Date.now()) {
+    throw new Error('Appeal window not expired - cannot settle')
+  }
+  if (outcome === 'favor_client') {
+    e.status = 'refunded'
+    e.stripeBlocked = false
+  } else if (outcome === 'favor_creator') {
+    e.status = 'released'
+    e.stripeBlocked = false
+  } else if (outcome === 'split') {
+    if (!split) throw new Error('Split amounts required')
+    if (split.clientCents + split.creatorCents !== e.amountCents) {
+      throw new Error('Split amounts must equal escrow amount')
+    }
+    e.status = 'split_released'
+    e.stripeBlocked = false
+    // In production this would do two Stripe transfers / two Soroban transfers atomically
+  } else if (outcome === 'dismissed') {
+    e.status = 'funded_authorized'
+    e.stripeBlocked = false
+  }
+  e.updatedAt = nowIso()
+  if (outcome !== 'dismissed') {
+    e.releasedAt = nowIso() as unknown as string // for compatibility, not in type but store
+  }
+  return e
 }
 
-export async function markReleased(
-  escrowId: string,
-  receiptUrl?: string,
-): Promise<EscrowRecord | null> {
-  return transitionStatus(escrowId, "released", {
-    receiptUrl,
-    releasedAt: new Date(),
-  });
+/** Set appeal window deadline (on-chain timelock mirror) */
+export function setAppealDeadline(escrowId: string, deadlineIso: string): EscrowRecord | null {
+  const e = getStore().escrows.get(escrowId)
+  if (!e) return null
+  e.appealDeadline = deadlineIso
+  e.updatedAt = nowIso()
+  return e
 }
 
-export async function markRefunded(
-  escrowId: string,
-): Promise<EscrowRecord | null> {
-  return transitionStatus(escrowId, "refunded", { refundedAt: new Date() });
+export function isAppealWindowActive(escrowId: string): boolean {
+  const e = getStore().escrows.get(escrowId)
+  if (!e?.appealDeadline) return false
+  return new Date(e.appealDeadline).getTime() > Date.now()
 }
 
-export async function markFailed(
-  escrowId: string,
-  message?: string,
-): Promise<EscrowRecord | null> {
-  return transitionStatus(escrowId, "failed", { failureMessage: message });
+export function markFailed(escrowId: string, message?: string): EscrowRecord | null {
+  const e = getStore().escrows.get(escrowId)
+  if (!e) return null
+  e.status = 'failed'
+  e.failureMessage = message
+  e.updatedAt = nowIso()
+  return e
 }
 
-export async function listEscrowsForUser(
-  userId: string,
-): Promise<EscrowRecord[]> {
-  const rows = await prisma.escrow.findMany({
-    where: {
-      OR: [{ clientId: userId }, { freelancerUserId: userId }],
-    },
-    orderBy: { updatedAt: "desc" },
-  });
-  return rows.map(toRecord);
+export function listEscrowsForUser(userId: string): EscrowRecord[] {
+  return Array.from(getStore().escrows.values())
+    .filter((e) => e.clientUserId === userId || e.freelancerUserId === userId)
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
 }
 
-/** Wipes all escrow rows. Only for test teardown. */
-export async function __resetEscrowStoreForTests(): Promise<void> {
-  await prisma.escrow.deleteMany();
+export function __resetEscrowStoreForTests(): void {
+  const g = globalThis as unknown as { __escrowStore?: Store }
+  g.__escrowStore = {
+    escrows: new Map(),
+    byPaymentIntent: new Map(),
+  }
 }

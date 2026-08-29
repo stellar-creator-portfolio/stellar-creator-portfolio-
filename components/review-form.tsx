@@ -1,63 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { Star, Loader, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { z } from 'zod';
-
-const reviewSchema = z.object({
-  rating: z.number().min(1).max(5),
-  text: z.string().min(20, 'Review must be at least 20 characters').max(500),
-});
-
-type ReviewFormData = z.infer<typeof reviewSchema>;
-
-interface ReviewFormProps {
-  creatorId: string;
-  onClose: () => void;
-  onSubmit: (review: any) => void;
-}
-
-export function ReviewForm({ creatorId, onClose, onSubmit }: ReviewFormProps) {
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [formData, setFormData] = useState<ReviewFormData>({
-    rating: 5,
-    text: '',
-  });
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setIsLoading(true);
-
-    try {
-      const validated = reviewSchema.parse(formData);
-
-      const response = await fetch('/api/reviews', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          creatorId,
-          ...validated,
-        }),
-      });
-
-      if (!response.ok) throw new Error('Failed to submit review');
-
-      const review = await response.json();
-      onSubmit(review);
-    } catch (err) {
-      if (err instanceof z.ZodError) {
-        setError(err.errors[0].message);
-      } else {
-        setError(err instanceof Error ? err.message : 'An error occurred');
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
-import { Star } from 'lucide-react';
+import { useCallback, useState } from 'react';
+import { Star, ShieldCheck, ShieldAlert, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -65,6 +9,11 @@ import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { validateReview, type ReviewSubmission, type FieldError } from '@/lib/api-models';
 import { submitReview, ApiClientError } from '@/lib/api-client';
+import {
+  generateReviewProof,
+  proofIsWellFormed,
+  type ProofStatus,
+} from '@/lib/zk-review-proof';
 
 // ── Star picker ───────────────────────────────────────────────────────────────
 
@@ -118,37 +67,97 @@ function fieldError(errors: FieldError[], field: string): string | undefined {
   return errors.find((e) => e.field === field)?.message;
 }
 
+// ── Proof status indicator ────────────────────────────────────────────────────
+
+function ProofStatusBadge({ status }: { status: ProofStatus }) {
+  if (status === 'idle') return null;
+
+  const config: Record<ProofStatus, { icon: React.ReactNode; label: string; variant: string }> = {
+    idle: { icon: null, label: '', variant: '' },
+    loading_wasm: {
+      icon: <Loader2 className="h-4 w-4 animate-spin" />,
+      label: 'Loading proving circuit…',
+      variant: 'text-muted-foreground',
+    },
+    proving: {
+      icon: <Loader2 className="h-4 w-4 animate-spin" />,
+      label: 'Generating zero-knowledge proof…',
+      variant: 'text-amber-600',
+    },
+    verified: {
+      icon: <ShieldCheck className="h-4 w-4 text-emerald-500" />,
+      label: 'Identity verified (ZK proof ready)',
+      variant: 'text-emerald-600',
+    },
+    failed: {
+      icon: <ShieldAlert className="h-4 w-4 text-destructive" />,
+      label: 'Proof generation failed',
+      variant: 'text-destructive',
+    },
+  };
+
+  const c = config[status];
+  return (
+    <div className={cn('flex items-center gap-2 text-xs', c.variant)}>
+      {c.icon}
+      <span>{c.label}</span>
+    </div>
+  );
+}
+
 // ── ReviewForm ────────────────────────────────────────────────────────────────
 
 export interface ReviewFormProps {
   bountyId: string;
   creatorId: string;
   creatorName: string;
-  /** Called after a successful submission. */
   onSuccess?: () => void;
-  /** Called when form is cancelled. */
   onCancel?: () => void;
-  /** Show as modal or inline form */
   variant?: 'modal' | 'inline';
 }
 
 type FormState = 'idle' | 'submitting' | 'success' | 'error';
 
-export function ReviewForm({ 
-  bountyId, 
-  creatorId, 
-  creatorName, 
-  onSuccess, 
+export function ReviewForm({
+  bountyId,
+  creatorId,
+  creatorName,
+  onSuccess,
   onCancel,
-  variant = 'inline' 
+  variant = 'inline',
 }: ReviewFormProps) {
   const [rating, setRating] = useState(0);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
+  const [credential, setCredential] = useState('');
   const [reviewerName, setReviewerName] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldError[]>([]);
   const [formState, setFormState] = useState<FormState>('idle');
   const [apiError, setApiError] = useState<string | null>(null);
+  const [proofStatus, setProofStatus] = useState<ProofStatus>('idle');
+
+  const handleGenerateProof = useCallback(async () => {
+    if (!credential.trim() || proofStatus === 'proving' || proofStatus === 'loading_wasm') return;
+
+    try {
+      const result = await generateReviewProof(
+        { credential: credential.trim(), subjectId: creatorId, rating },
+        setProofStatus,
+      );
+
+      if (!proofIsWellFormed(result)) {
+        setProofStatus('failed');
+        setApiError('Generated proof is malformed');
+        return;
+      }
+
+      return result;
+    } catch (err) {
+      setProofStatus('failed');
+      setApiError(err instanceof Error ? err.message : 'Proof generation failed');
+      return null;
+    }
+  }, [credential, creatorId, rating, proofStatus]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -161,18 +170,44 @@ export function ReviewForm({
       return;
     }
     setFieldErrors([]);
+
+    const proof = await handleGenerateProof();
+    if (!proof) return;
+
     setFormState('submitting');
 
     try {
+      const verifyRes = await fetch('/api/reviews/verify-proof', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nullifier: proof.nullifier,
+          proof: proof.proof,
+          publicSignals: proof.publicSignals,
+          creatorId,
+        }),
+      });
+
+      if (!verifyRes.ok) {
+        const errBody = await verifyRes.json().catch(() => ({}));
+        if (verifyRes.status === 409) {
+          throw new Error('This review has already been submitted (duplicate detected)');
+        }
+        throw new Error(errBody.error || 'Proof verification failed');
+      }
+
       await submitReview(data as ReviewSubmission);
       setFormState('success');
       onSuccess?.();
     } catch (err) {
       setFormState('error');
+      setProofStatus('failed');
       setApiError(
         err instanceof ApiClientError
           ? err.message
-          : 'Something went wrong. Please try again.',
+          : err instanceof Error
+            ? err.message
+            : 'Something went wrong. Please try again.',
       );
     }
   }
@@ -293,6 +328,27 @@ export function ReviewForm({
           </p>
         )}
       </div>
+
+      {/* Credential (used for ZK proof, never sent to server) */}
+      <div className="space-y-1.5">
+        <Label htmlFor="review-credential">
+          Proof credential <span aria-hidden>*</span>
+        </Label>
+        <Input
+          id="review-credential"
+          type="password"
+          placeholder="Enter your private credential for anonymous verification"
+          value={credential}
+          onChange={(e) => setCredential(e.target.value)}
+          autoComplete="off"
+        />
+        <p className="text-[11px] text-muted-foreground">
+          Your credential is used to generate a zero-knowledge proof. It never leaves your browser.
+        </p>
+      </div>
+
+      {/* ZK proof status */}
+      <ProofStatusBadge status={proofStatus} />
 
       {/* API-level error */}
       {apiError && (

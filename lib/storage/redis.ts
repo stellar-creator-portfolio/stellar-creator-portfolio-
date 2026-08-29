@@ -22,6 +22,7 @@ export const KEYS = {
   user:      (id: string)     => `user:${id}`,
   rateLimit: (key: string)    => `rl:${key}`,
   collab:    (docName: string) => `collab:${docName}`,
+  signaling: (room: string)   => `signaling::${room}`,
 } as const
 
 // ── Singleton ─────────────────────────────────────────────────────────────────
@@ -143,6 +144,74 @@ export async function redisIncr(key: string, ttlSeconds: number): Promise<number
 }
 
 /**
+ * Set a value only if the key does not already exist.
+ * Returns true when the write succeeds, false when the key already exists,
+ * and null when Redis is unavailable.
+ */
+export async function redisSetIfAbsent<T>(
+  key: string,
+  value: T,
+  ttlSeconds: number,
+): Promise<boolean | null> {
+  const redis = getClient()
+  if (!redis) return null
+
+  try {
+    const result = await redis.set(key, JSON.stringify(value), 'NX', 'EX', ttlSeconds)
+    return result === 'OK'
+  } catch {
+    return null
+  }
+}
+
+export type SlidingWindowRateLimitResult = {
+  allowed: boolean
+  count: number
+  remaining: number
+  resetAt: number
+}
+
+/**
+ * Sliding-window rate limiting backed by a Redis sorted set.
+ * Returns null when Redis is unavailable so callers can degrade gracefully.
+ */
+export async function redisSlidingWindowRateLimit(
+  key: string,
+  maxRequests: number,
+  windowSeconds: number,
+): Promise<SlidingWindowRateLimitResult | null> {
+  const redis = getClient()
+  if (!redis) return null
+
+  const now = Date.now()
+  const cutoff = now - windowSeconds * 1000
+  const member = `${now}:${Math.random().toString(36).slice(2)}`
+
+  try {
+    const multi = redis.multi()
+    multi.zremrangebyscore(key, 0, cutoff)
+    multi.zadd(key, now, member)
+    multi.zcard(key)
+    multi.expire(key, windowSeconds)
+
+    const results = await multi.exec()
+    const count = results?.[2]?.[1]
+    if (typeof count !== 'number') {
+      return null
+    }
+
+    return {
+      allowed: count <= maxRequests,
+      count,
+      remaining: Math.max(maxRequests - count, 0),
+      resetAt: now + windowSeconds * 1000,
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
  * Get the TTL remaining on a key (seconds). Returns null if unavailable.
  */
 export async function redisTTL(key: string): Promise<number | null> {
@@ -153,6 +222,201 @@ export async function redisTTL(key: string): Promise<number | null> {
     return await redis.ttl(key)
   } catch {
     return null
+  }
+}
+
+// ── Message helpers ────────────────────────────────────────────────────────────
+
+const MSG_TTL = 30 * 24 * 60 * 60 // 30 days
+
+export const MESSAGE_KEYS = {
+  hash:      (id: string)            => `msg:${id}`,
+  timeline:  (threadId: string)      => `msgs:${threadId}:timeline`,
+  channel:   'messages:new',
+  rateLimit: (userId: string)        => `rl:msg:${userId}`,
+} as const
+
+export type StoredMessage = {
+  id: string
+  threadId: string
+  senderId: string
+  recipientId: string
+  ciphertext: string
+  iv: string
+  createdAt: string
+  attachment?: Record<string, unknown> | null
+  status: string
+  readBy: string[]
+  metadata?: Record<string, unknown>
+}
+
+/** Store a message hash + append to thread timeline. Returns false if Redis is unavailable. */
+export async function redisMessageStore(msg: StoredMessage): Promise<boolean> {
+  const redis = getClient()
+  if (!redis) return false
+
+  const score = new Date(msg.createdAt).getTime()
+  const hashKey = MESSAGE_KEYS.hash(msg.id)
+  const timelineKey = MESSAGE_KEYS.timeline(msg.threadId)
+
+  try {
+    const multi = redis.multi()
+    multi.hset(hashKey, msg as unknown as Record<string, unknown>)
+    multi.zadd(timelineKey, score, msg.id)
+    multi.expire(hashKey, MSG_TTL)
+    multi.expire(timelineKey, MSG_TTL)
+    await multi.exec()
+    return true
+  } catch (err) {
+    console.warn('[Redis] messageStore failed:', err)
+    return false
+  }
+}
+
+/** Fetch a single message by id. */
+export async function redisMessageGetById(id: string): Promise<StoredMessage | null> {
+  const redis = getClient()
+  if (!redis) return null
+
+  try {
+    const raw = await redis.hgetall(MESSAGE_KEYS.hash(id))
+    if (!raw || Object.keys(raw).length === 0) return null
+    return raw as unknown as StoredMessage
+  } catch {
+    return null
+  }
+}
+
+export type MessagePage = {
+  messages: StoredMessage[]
+  nextCursor: string | null
+  hasMore: boolean
+}
+
+/**
+ * Cursor-based pagination over a thread timeline.
+ * `cursor` is an opaque base64-encoded timestamp.
+ */
+export async function redisMessageList(
+  threadId: string,
+  cursor?: string | null,
+  limit: number = 50,
+): Promise<MessagePage> {
+  const redis = getClient()
+  if (!redis) return { messages: [], nextCursor: null, hasMore: false }
+
+  const capped = Math.min(limit, 200)
+  const timelineKey = MESSAGE_KEYS.timeline(threadId)
+
+  try {
+    let minScore: number
+    if (cursor) {
+      try {
+        minScore = parseInt(Buffer.from(cursor, 'base64').toString('utf-8'), 10)
+      } catch {
+        minScore = Date.now()
+      }
+    } else {
+      minScore = 0
+    }
+
+    // Fetch one extra to detect hasMore
+    const ids = await redis.zrangebyscore(timelineKey, minScore + 1, '+inf', 'LIMIT', 0, capped + 1)
+    const hasMore = ids.length > capped
+    const batchIds = ids.slice(0, capped)
+
+    if (batchIds.length === 0) {
+      return { messages: [], nextCursor: null, hasMore: false }
+    }
+
+    const pipeline = redis.pipeline()
+    for (const id of batchIds) {
+      pipeline.hgetall(MESSAGE_KEYS.hash(id))
+    }
+    const results = await pipeline.exec()
+
+    const messages: StoredMessage[] = []
+    for (const [err, raw] of results || []) {
+      if (!err && raw && typeof raw === 'object' && Object.keys(raw as Record<string, unknown>).length > 0) {
+        messages.push(raw as unknown as StoredMessage)
+      }
+    }
+
+    const lastId = batchIds[batchIds.length - 1]
+    const lastMsg = messages.find((m) => m.id === lastId)
+    const nextCursor = hasMore && lastMsg
+      ? Buffer.from(new Date(lastMsg.createdAt).getTime().toString()).toString('base64')
+      : null
+
+    return { messages, nextCursor, hasMore }
+  } catch (err) {
+    console.warn('[Redis] messageList failed:', err)
+    return { messages: [], nextCursor: null, hasMore: false }
+  }
+}
+
+/** Publish a message event to the Redis pub/sub channel. */
+export async function redisMessagePublish(event: Record<string, unknown>): Promise<void> {
+  const redis = getClient()
+  if (!redis) return
+
+  try {
+    await redis.publish(MESSAGE_KEYS.channel, JSON.stringify(event))
+  } catch (err) {
+    console.warn('[Redis] publish failed:', err)
+  }
+}
+
+/** Delete a message from Redis (hash + timeline). */
+export async function redisMessageDelete(id: string, threadId: string): Promise<boolean> {
+  const redis = getClient()
+  if (!redis) return false
+
+  try {
+    const multi = redis.multi()
+    multi.del(MESSAGE_KEYS.hash(id))
+    multi.zrem(MESSAGE_KEYS.timeline(threadId), id)
+    await multi.exec()
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Update readBy on a message. */
+export async function redisMessageAddReadBy(id: string, userId: string): Promise<void> {
+  const redis = getClient()
+  if (!redis) return
+
+  try {
+    const key = MESSAGE_KEYS.hash(id)
+    await redis.hincrby(key, 'readBy', 0) // ensure field exists
+    // hset with JSON serialized readBy array
+    const msg = await redis.hgetall(key)
+    if (msg && Object.keys(msg).length > 0) {
+      const stored = msg as unknown as StoredMessage
+      const updated = Array.from(new Set([...(stored.readBy || []), userId]))
+      await redis.hset(key, 'readBy', JSON.stringify(updated))
+    }
+  } catch {
+    // ignore
+  }
+}
+
+/** Rate limit: returns remaining budget or -1 if over limit. */
+export async function redisCheckRateLimit(userId: string, maxPerSecond = 30): Promise<number> {
+  const redis = getClient()
+  if (!redis) return maxPerSecond // pass-through if Redis unavailable
+
+  const key = MESSAGE_KEYS.rateLimit(userId)
+  try {
+    const count = await redis.incr(key)
+    if (count === 1) {
+      await redis.expire(key, 1)
+    }
+    return count <= maxPerSecond ? maxPerSecond - count : -1
+  } catch {
+    return maxPerSecond
   }
 }
 

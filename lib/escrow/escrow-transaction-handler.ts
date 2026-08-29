@@ -265,7 +265,8 @@ export async function disputeEscrow(
             creatorId: creatorId,
             clientId: clientId,
             reason: reason,
-            status: "open",
+            status: "filed",
+            filedByUserId: clientId,
           },
         });
 

@@ -70,6 +70,12 @@ model User {
   matchFeedback       MatchFeedback[]
   matchNotifications  MatchNotification[]
   auditLogs           AuditLog[]
+  adminDisputes       Dispute[]        @relation("AdminDisputes")
+  filedDisputes       Dispute[]        @relation("FiledDisputes")
+  creatorDisputes     Dispute[]        @relation("CreatorDisputes")
+  clientDisputes      Dispute[]        @relation("ClientDisputes")
+  disputeEvidence     DisputeEvidence[]
+  disputeVotes        DisputeCommunityVote[]
 
   @@index([email])
 }
@@ -148,6 +154,7 @@ model Bounty {
   category    String?
   tags        String[]
   applications BountyApplication[]
+  escrows      Escrow[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -201,12 +208,16 @@ model Review {
   helpfulCount      Int          @default(0)
   notHelpfulCount   Int          @default(0)
   status            ReviewStatus @default(PENDING)
+  nullifier         String?      @unique
+  zkProof           Json?        /// Groth16 proof JSON
+  zkPublicSignals   String[]     /// Public signals from proof
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
   @@index([creatorId])
   @@index([reviewerId])
   @@index([status])
+  @@index([nullifier])
 }
 
 model ReviewVote {
@@ -345,24 +356,36 @@ model MatchNotification {
 
 model Escrow {
   id              String   @id @default(cuid())
-  bountyId        String
+  bountyId        String?
   creatorId       String
   clientId        String
-  freelancerUserId String?
   amount          Int
   currency        String   @default("usd")
   platformFeeCents Int     @default(0)
-  paymentIntentId String?
-  status          String   @default("active")
+  paymentIntentId String?  @unique
   receiptUrl      String?
   failureMessage  String?
+  freelancerUserId String?
+  usdAmountCents  Int?
+  lockedPriceMicroUsd Int?
+  usedFallbackPrice Boolean?
+  settlementTxHashes String[] @default([])
+  settlementRecoveryNote String? @db.Text
+  status          String   @default("active")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   releasedAt      DateTime?
   refundedAt      DateTime?
   disputedAt      DateTime?
   disputeReason   String?
+  stripeBlocked   Boolean  @default(false)
+  onChainEscrowId String?
+  onChainTxHash   String?
+  evidenceHash    String?
+  appealDeadline  DateTime?
   version         Int      @default(1)
+
+  bounty          Bounty?  @relation(fields: [bountyId], references: [id], onDelete: Cascade)
 
   @@index([bountyId])
   @@index([creatorId])
@@ -399,20 +422,131 @@ model Transaction {
   @@index([type])
 }
 
+enum DisputeStatus {
+  filed
+  evidence
+  mediation
+  community_vote
+  resolved
+  appealed
+  closed
+}
+
+enum DisputeCategory {
+  payment
+  delivery
+  quality
+  communication
+  other
+}
+
 model Dispute {
-  id        String   @id @default(cuid())
-  escrowId  String
-  creatorId String
-  clientId  String
-  status    String   @default("open")
-  reason    String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id               String          @id @default(cuid())
+  escrowId         String
+  creatorId        String
+  clientId         String
+  status           DisputeStatus   @default(filed)
+  category         DisputeCategory @default(other)
+  title            String          @default("")
+  description      String          @default("")
+  reason           String?
+  escrowAmountCents Int            @default(0)
+  preventionTags   String[]
+  assignedAdminId  String?
+  filedByUserId    String
+  evidenceHash     String?         // SHA-256 hex of evidence bundle committed on-chain
+  onChainTxHash    String?         // Soroban freeze tx hash (sequence-safe)
+  stripePaymentIntentId String?    // Stripe PaymentIntent blocked
+  appealDeadline   DateTime?       // On-chain timelock
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  creator          User            @relation("CreatorDisputes", fields: [creatorId], references: [id], onDelete: Cascade)
+  client           User            @relation("ClientDisputes", fields: [clientId], references: [id], onDelete: Cascade)
+  filedBy          User            @relation("FiledDisputes", fields: [filedByUserId], references: [id], onDelete: Cascade)
+  assignedAdmin    User?           @relation("AdminDisputes", fields: [assignedAdminId], references: [id], onDelete: SetNull)
+
+  evidence         DisputeEvidence[]
+  timeline         DisputeTimelineEntry[]
+  communityVotes   DisputeCommunityVote[]
+  resolution       DisputeResolution?
+  appeal           DisputeAppeal?
 
   @@index([escrowId])
   @@index([creatorId])
   @@index([clientId])
   @@index([status])
+  @@index([filedByUserId])
+  @@index([assignedAdminId])
+}
+
+model DisputeEvidence {
+  id                String   @id @default(cuid())
+  disputeId         String
+  dispute           Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  fileName          String
+  mimeType          String
+  byteSize          Int
+  sha256            String
+  note              String?
+  submittedByUserId String
+  submittedBy       User     @relation(fields: [submittedByUserId], references: [id], onDelete: Cascade)
+  submittedAt       DateTime @default(now())
+
+  @@index([disputeId])
+}
+
+model DisputeTimelineEntry {
+  id        String   @id @default(cuid())
+  disputeId String
+  dispute   Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  message   String
+  at        DateTime @default(now())
+
+  @@index([disputeId])
+}
+
+model DisputeCommunityVote {
+  id        String   @id @default(cuid())
+  disputeId String
+  dispute   Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  side      String   // "client" | "creator"
+  castAt    DateTime @default(now())
+
+  @@unique([disputeId, userId])
+  @@index([disputeId])
+}
+
+model DisputeResolution {
+  id        String   @id @default(cuid())
+  disputeId String   @unique
+  dispute   Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  outcome   String   // "favor_client" | "favor_creator" | "split" | "dismissed"
+  summary   String   @db.Text
+  templateId String?
+  resolvedBy String?
+  resolvedAt DateTime @default(now())
+  appealDeadline DateTime?
+  onChainTxHash String?
+  clientCents Int?
+  creatorCents Int?
+
+  @@index([disputeId])
+}
+
+model DisputeAppeal {
+  id         String   @id @default(cuid())
+  disputeId  String   @unique
+  dispute    Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  status     String   @default("pending") // "pending" | "reviewed"
+  reason     String   @db.Text
+  submittedAt DateTime @default(now())
+  reviewedAt DateTime?
+  outcome    String?  // "upheld" | "denied"
+
+  @@index([disputeId])
 }
 
 // ── Audit Logging & Telemetry ────────────────────────────────────────────
@@ -478,6 +612,32 @@ enum AuditStatus {
   DENIED
 }
 
+// ── Messaging ────────────────────────────────────────────────────────────
+
+/// Archived messages — moved from Redis after TTL expiry via background job.
+model Message {
+  id            String   @id
+  threadId      String
+  senderId      String
+  recipientId   String
+  ciphertext    String
+  iv            String
+  createdAt     DateTime
+  attachment    Json?    /// { name, type, size, data (base64) }
+  status        String   @default("sent")   /// sent | delivered | read
+  readBy        String[] @default([])
+  metadata      Json?
+
+  /// Cursor for archive chronological ordering
+  archivedAt    DateTime @default(now())
+  expiresAt     DateTime /// when the Redis copy expired
+
+  @@index([threadId, createdAt])
+  @@index([senderId])
+  @@index([recipientId])
+  @@index([expiresAt])
+}
+
 // ── Soroban Sequence Management ──────────────────────────────────────────
 
 model SequenceLock {
@@ -536,3 +696,23 @@ model SorobanTransaction {
   @@index([status])
   @@unique([accountId, sequence])
 }
+
+// ── Centralized Error Reporting ────────────────────────────────────────────
+model ErrorLog {
+  id          String   @id
+  timestamp   DateTime
+  level       String
+  message     String
+  stack       String?
+  context     Json
+  url          String?
+  userAgent   String?
+  environment String
+
+  createdAt   DateTime @default(now())
+
+  @@index([timestamp])
+  @@index([level])
+  @@index([environment])
+}
+

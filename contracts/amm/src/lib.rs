@@ -1,5 +1,7 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol, Vec, Map};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, Address, Env, IntoVal, Symbol, Val, Vec,
+};
 
 // Simple constant product AMM contract (x * y = k)
 
@@ -8,6 +10,17 @@ pub enum StorageKey {
     Reserves(Symbol), // token id string
     TotalLp,
     LpBalance(Address),
+    OracleContract,
+    EscrowContract,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ValuationResult {
+    pub usd_amount_micro: i128,
+    pub token_amount: i128,
+    pub price_used: i128,
+    pub used_fallback: bool,
 }
 
 #[contract]
@@ -19,6 +32,17 @@ impl AmmContract {
     pub fn init(env: Env) {
         // noop in this minimal example
         let _: () = ();
+    }
+
+    pub fn configure_settlement(
+        env: Env,
+        admin: Address,
+        oracle_contract: Address,
+        escrow_contract: Address,
+    ) {
+        admin.require_auth();
+        env.storage().set(&StorageKey::OracleContract, &oracle_contract);
+        env.storage().set(&StorageKey::EscrowContract, &escrow_contract);
     }
 
     pub fn add_liquidity(env: Env, user: Address, amount_x: i128, amount_y: i128) -> i128 {
@@ -120,6 +144,74 @@ impl AmmContract {
         env.storage().set(&StorageKey::Reserves(key_y), &new_reserves_y);
 
         dy
+    }
+
+    pub fn swap_exact_usd_to_xlm(
+        env: Env,
+        caller: Address,
+        usd_amount_micro: i128,
+        min_xlm_out: i128,
+        escrow_id: u64,
+    ) -> i128 {
+        caller.require_auth();
+        assert!(usd_amount_micro > 0, "invalid usd amount");
+        assert!(escrow_id > 0, "invalid escrow id");
+
+        let oracle_contract: Address = env
+            .storage()
+            .get(&StorageKey::OracleContract)
+            .expect("oracle not configured");
+        let escrow_contract: Address = env
+            .storage()
+            .get(&StorageKey::EscrowContract)
+            .expect("escrow not configured");
+
+        let args: Vec<Val> = Vec::from_array(&env, [escrow_id.into_val(&env)]);
+        let valuation: ValuationResult = env.invoke_contract(
+            &oracle_contract,
+            &Symbol::new(&env, "get_locked_valuation"),
+            args,
+        );
+
+        assert_eq!(
+            valuation.usd_amount_micro,
+            usd_amount_micro,
+            "locked valuation amount mismatch"
+        );
+
+        let fee_numerator: i128 = 997;
+        let fee_denominator: i128 = 1000;
+        let key_x = Symbol::short("x");
+        let key_y = Symbol::short("y");
+        let reserves_x: i128 = env.storage().get(&StorageKey::Reserves(key_x.clone())).unwrap_or(0);
+        let reserves_y: i128 = env.storage().get(&StorageKey::Reserves(key_y.clone())).unwrap_or(0);
+
+        assert!(reserves_x > 0 && reserves_y > 0, "empty pool");
+
+        let dx_with_fee = valuation.token_amount * fee_numerator;
+        let numerator = dx_with_fee * reserves_y;
+        let denominator = reserves_x * fee_denominator + dx_with_fee;
+        let actual_xlm_out = numerator / denominator;
+
+        assert!(actual_xlm_out >= min_xlm_out && actual_xlm_out > 0, "slippage or zero output");
+
+        env.storage()
+            .set(&StorageKey::Reserves(key_x), &(reserves_x + valuation.token_amount));
+        env.storage()
+            .set(&StorageKey::Reserves(key_y), &(reserves_y - actual_xlm_out));
+
+        env.events().publish(
+            (symbol_short!("amm"), symbol_short!("swap")),
+            (
+                escrow_id,
+                usd_amount_micro,
+                actual_xlm_out,
+                valuation.price_used,
+                escrow_contract,
+            ),
+        );
+
+        actual_xlm_out
     }
 }
 

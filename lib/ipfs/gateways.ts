@@ -1,8 +1,8 @@
 /** Ordered IPFS gateway endpoints — primary first, fallbacks on failure. */
 export const IPFS_GATEWAYS = [
-  process.env.NEXT_PUBLIC_IPFS_GATEWAY ?? 'https://ipfs.io/ipfs/',
   'https://cloudflare-ipfs.com/ipfs/',
   'https://dweb.link/ipfs/',
+  process.env.NEXT_PUBLIC_IPFS_GATEWAY ?? 'https://ipfs.io/ipfs/',
   'https://gateway.pinata.cloud/ipfs/',
   'https://4everland.io/ipfs/',
 ] as const;
@@ -39,6 +39,33 @@ export async function fetchViaGateways(
   }
 
   throw lastError ?? new Error('All IPFS gateways failed');
+}
+
+export async function verifyCidResolvable(cid: string): Promise<boolean> {
+  for (let i = 0; i < IPFS_GATEWAYS.length; i++) {
+    const url = buildGatewayUrl(cid, i);
+
+    try {
+      const head = await fetch(url, {
+        method: 'HEAD',
+        signal: AbortSignal.timeout(8_000),
+      });
+
+      if (head.ok) return true;
+      if (![405, 501].includes(head.status)) continue;
+
+      const ranged = await fetch(url, {
+        headers: { Range: 'bytes=0-0' },
+        signal: AbortSignal.timeout(8_000),
+      });
+
+      if (ranged.ok) return true;
+    } catch {
+      // Try the next gateway.
+    }
+  }
+
+  return false;
 }
 
 export async function verifyContentHash(data: Blob | ArrayBuffer, expectedHex: string): Promise<boolean> {

@@ -16,7 +16,7 @@ export interface ErrorContext {
 export interface ErrorReport {
   id: string;
   timestamp: string;
-  level: 'error' | 'warning' | 'info';
+  level: "error" | "warning" | "info";
   message: string;
   stack?: string;
   context: ErrorContext;
@@ -40,15 +40,16 @@ class ErrorTracker {
   async initialize(): Promise<void> {
     if (this.isInitialized) return;
 
-    this.enableTracking = process.env.NEXT_PUBLIC_ENABLE_ERROR_TRACKING !== 'false';
+    this.enableTracking =
+      process.env.NEXT_PUBLIC_ENABLE_ERROR_TRACKING !== "false";
 
     if (!this.enableTracking) {
-      console.log('[ErrorTracker] Error tracking disabled');
+      console.log("[ErrorTracker] Error tracking disabled");
       return;
     }
 
     // Initialize Sentry on client-side
-    if (typeof window !== 'undefined') {
+    if (typeof window !== "undefined") {
       await this.initializeSentry();
     }
 
@@ -61,15 +62,16 @@ class ErrorTracker {
   private async initializeSentry(): Promise<void> {
     const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
     if (!dsn) {
-      console.warn('[ErrorTracker] Sentry DSN not configured');
+      console.warn("[ErrorTracker] Sentry DSN not configured");
       return;
     }
 
     try {
-      const Sentry = await import('@sentry/nextjs');
+      const Sentry = await import("@sentry/nextjs");
       Sentry.init({
         dsn,
-        environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT || 'development',
+        environment:
+          process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT || "development",
         tracesSampleRate: 1.0,
         integrations: [
           new Sentry.Replay({
@@ -81,7 +83,7 @@ class ErrorTracker {
         replayOnErrorSampleRate: 1.0,
       });
     } catch (error) {
-      console.error('[ErrorTracker] Failed to initialize Sentry:', error);
+      console.error("[ErrorTracker] Failed to initialize Sentry:", error);
     }
   }
 
@@ -93,8 +95,11 @@ class ErrorTracker {
     context: ErrorContext = {},
   ): Promise<string> {
     if (!this.enableTracking) {
-      console.error('[ErrorTracker] Error tracking disabled, logging to console:', error);
-      return '';
+      console.error(
+        "[ErrorTracker] Error tracking disabled, logging to console:",
+        error,
+      );
+      return "";
     }
 
     const errorReport = this.buildErrorReport(error, context);
@@ -116,19 +121,20 @@ class ErrorTracker {
     context: ErrorContext = {},
   ): Promise<string> {
     if (!this.enableTracking) {
-      console.warn('[ErrorTracker] Warning:', message);
-      return '';
+      console.warn("[ErrorTracker] Warning:", message);
+      return "";
     }
 
     const errorReport: ErrorReport = {
       id: this.generateErrorId(),
       timestamp: new Date().toISOString(),
-      level: 'warning',
+      level: "warning",
       message,
       context: { ...context, sessionId: this.sessionId },
-      url: typeof window !== 'undefined' ? window.location.href : undefined,
-      userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
-      environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT || 'development',
+      url: typeof window !== "undefined" ? window.location.href : undefined,
+      userAgent:
+        typeof navigator !== "undefined" ? navigator.userAgent : undefined,
+      environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT || "development",
     };
 
     await this.sendToBackend(errorReport);
@@ -142,18 +148,19 @@ class ErrorTracker {
     error: Error | string,
     context: ErrorContext,
   ): ErrorReport {
-    const errorObj = typeof error === 'string' ? new Error(error) : error;
+    const errorObj = typeof error === "string" ? new Error(error) : error;
 
     return {
       id: this.generateErrorId(),
       timestamp: new Date().toISOString(),
-      level: 'error',
+      level: "error",
       message: errorObj.message,
       stack: errorObj.stack,
       context: { ...context, sessionId: this.sessionId },
-      url: typeof window !== 'undefined' ? window.location.href : undefined,
-      userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
-      environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT || 'development',
+      url: typeof window !== "undefined" ? window.location.href : undefined,
+      userAgent:
+        typeof navigator !== "undefined" ? navigator.userAgent : undefined,
+      environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT || "development",
     };
   }
 
@@ -165,7 +172,7 @@ class ErrorTracker {
     context: ErrorContext,
   ): Promise<void> {
     try {
-      const Sentry = await import('@sentry/nextjs');
+      const Sentry = await import("@sentry/nextjs");
       Sentry.captureException(error, {
         tags: {
           component: context.component,
@@ -182,7 +189,7 @@ class ErrorTracker {
           : undefined,
       });
     } catch (error) {
-      console.error('[ErrorTracker] Failed to send to Sentry:', error);
+      console.error("[ErrorTracker] Failed to send to Sentry:", error);
     }
   }
 
@@ -191,23 +198,28 @@ class ErrorTracker {
    */
   private async sendToBackend(errorReport: ErrorReport): Promise<void> {
     try {
-      const response = await fetch('/api/errors/log', {
-        method: 'POST',
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+
+      const response = await fetch("/api/errors/log", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify(errorReport),
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
 
       if (!response.ok) {
         console.error(
-          '[ErrorTracker] Backend logging failed:',
+          "[ErrorTracker] Backend logging failed:",
           response.status,
           response.statusText,
         );
       }
     } catch (error) {
-      console.error('[ErrorTracker] Failed to send error to backend:', error);
+      console.error("[ErrorTracker] Failed to send error to backend:", error);
     }
   }
 
@@ -216,13 +228,13 @@ class ErrorTracker {
    */
   setUserContext(userId: string, userEmail?: string): void {
     try {
-      const Sentry = require('@sentry/nextjs');
+      const Sentry = require("@sentry/nextjs");
       Sentry.setUser({
         id: userId,
         email: userEmail,
       });
     } catch (error) {
-      console.error('[ErrorTracker] Failed to set user context:', error);
+      console.error("[ErrorTracker] Failed to set user context:", error);
     }
   }
 
@@ -231,10 +243,10 @@ class ErrorTracker {
    */
   clearUserContext(): void {
     try {
-      const Sentry = require('@sentry/nextjs');
+      const Sentry = require("@sentry/nextjs");
       Sentry.setUser(null);
     } catch (error) {
-      console.error('[ErrorTracker] Failed to clear user context:', error);
+      console.error("[ErrorTracker] Failed to clear user context:", error);
     }
   }
 
@@ -243,11 +255,11 @@ class ErrorTracker {
    */
   addBreadcrumb(
     message: string,
-    category: string = 'user-action',
-    level: 'info' | 'warning' | 'error' = 'info',
+    category: string = "user-action",
+    level: "info" | "warning" | "error" = "info",
   ): void {
     try {
-      const Sentry = require('@sentry/nextjs');
+      const Sentry = require("@sentry/nextjs");
       Sentry.addBreadcrumb({
         message,
         category,
@@ -255,7 +267,7 @@ class ErrorTracker {
         timestamp: Date.now() / 1000,
       });
     } catch (error) {
-      console.error('[ErrorTracker] Failed to add breadcrumb:', error);
+      console.error("[ErrorTracker] Failed to add breadcrumb:", error);
     }
   }
 

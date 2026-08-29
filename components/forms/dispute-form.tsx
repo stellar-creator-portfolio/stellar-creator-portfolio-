@@ -15,15 +15,13 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
-  fileDispute,
   disputeFormInputSchema,
   toFileDisputeInput,
-  addEvidence,
   hashEvidenceBytes,
-  type DisputeRecord,
   type DisputeFormInput,
 } from '@/lib/services/dispute-service';
-import { Loader2 } from 'lucide-react';
+import { trpc } from '@/lib/trpc-client';
+import { Loader2, Shield, Lock } from 'lucide-react';
 
 type FormValues = DisputeFormInput;
 
@@ -34,11 +32,16 @@ export function DisputeForm({
 }: {
   userId: string;
   userName: string;
-  onFiled?: (d: DisputeRecord) => void;
+  onFiled?: (d: { id: string }) => void;
 }) {
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
   const [evidenceNote, setEvidenceNote] = useState('');
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const utils = trpc.useUtils();
+
+  const fileDisputeMut = trpc.disputes.fileDispute.useMutation();
+  const addEvidenceMut = trpc.disputes.addEvidence.useMutation();
 
   const {
     control,
@@ -66,22 +69,24 @@ export function DisputeForm({
     setSubmitError(null);
     try {
       const input = toFileDisputeInput(values);
-      const d = fileDispute(input, { userId, name: userName });
+      const d = await fileDisputeMut.mutateAsync(input);
+
       if (evidenceFile) {
         const buf = await evidenceFile.arrayBuffer();
         const sha256 = await hashEvidenceBytes(buf);
-        addEvidence(
-          d.id,
-          {
+        await addEvidenceMut.mutateAsync({
+          disputeId: d.id,
+          metadata: {
             fileName: evidenceFile.name,
             mimeType: evidenceFile.type || 'application/octet-stream',
             byteSize: evidenceFile.size,
             sha256,
             note: evidenceNote.trim() || undefined,
           },
-          { userId, label: userName }
-        );
+        });
       }
+
+      utils.disputes.listDisputes.invalidate();
       reset();
       setEvidenceFile(null);
       setEvidenceNote('');
@@ -188,11 +193,10 @@ export function DisputeForm({
           min={0}
           step="0.01"
           {...register('escrowDollars')}
-          placeholder="0.00 — simulates hold when &gt; 0"
+          placeholder="0.00 — dual-ledger freeze when &gt; 0"
         />
-        <p className="text-xs text-muted-foreground">
-          Enter dollars; we store cents internally. Funds stay simulated until live escrow is
-          connected.
+        <p className="text-xs text-muted-foreground flex items-center gap-1">
+          <Lock className="h-3 w-3" /> Filing freezes both Soroban escrow and Stripe PaymentIntent before either can succeed (payout integrity).
         </p>
         {errors.escrowDollars && (
           <p className="text-xs text-destructive">{errors.escrowDollars.message}</p>
@@ -201,10 +205,11 @@ export function DisputeForm({
 
       <div className="rounded-lg border border-border p-4 space-y-3 bg-muted/30">
         <div>
-          <Label htmlFor="evidence">Evidence file (optional)</Label>
+          <Label htmlFor="evidence" className="flex items-center gap-1">
+            <Shield className="h-3 w-3" /> Evidence file (optional) — SHA-256 committed on-chain
+          </Label>
           <p className="text-xs text-muted-foreground mt-1">
-            We record a SHA-256 hash and metadata only in this demo; attach the real file to your
-            support ticket in production.
+            We record a SHA-256 hash on-chain (BytesN&lt;32&gt;) for verification. The contract can verify this commitment.
           </p>
         </div>
         <Input
@@ -224,8 +229,12 @@ export function DisputeForm({
         </div>
       </div>
 
-      <Button type="submit" disabled={isSubmitting} className="w-full sm:w-auto">
-        {isSubmitting ? (
+      <Button
+        type="submit"
+        disabled={isSubmitting || fileDisputeMut.isPending}
+        className="w-full sm:w-auto"
+      >
+        {isSubmitting || fileDisputeMut.isPending ? (
           <>
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             Submitting…

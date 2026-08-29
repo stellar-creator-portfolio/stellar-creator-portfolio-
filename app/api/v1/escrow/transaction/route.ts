@@ -2,7 +2,7 @@ import { getToken } from 'next-auth/jwt'
 import { NextRequest, NextResponse } from 'next/server'
 
 import { prisma } from '@/lib/prisma'
-import { resolveOracleEscrowFunding } from '@/lib/payments/escrow-service'
+import { resolveOracleEscrowFunding } from '@/lib/payments/oracle-quote-service'
 import { oracleEscrowTransactionSchema } from '@/lib/payments/payment-validators'
 import {
   getOracleQuoteSecret,

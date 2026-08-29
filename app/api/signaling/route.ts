@@ -15,6 +15,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createHmac } from 'crypto';
+import { redisSet, redisGet, getRedisClient } from '@/lib/storage/redis';
 
 const TURN_SECRET = process.env.TURN_SECRET ?? 'insecure-dev-secret';
 const TURN_HOST = process.env.TURN_HOST ?? 'turn.example.com';
@@ -23,30 +24,112 @@ const TURN_TLS_PORT = parseInt(process.env.TURN_TLS_PORT ?? '5349', 10);
 const STUN_URL = process.env.STUN_URL ?? 'stun:stun.l.google.com:19302';
 const TURN_CREDENTIAL_TTL = parseInt(process.env.TURN_CREDENTIAL_TTL ?? '86400', 10);
 
-// In-memory relay store for HTTP signaling fallback
-// In production this should be replaced with Redis for multi-instance support
-const signalingStore = new Map<
-  string,
-  { type: string; sdp?: string; candidate?: RTCIceCandidateInit; peerId: string; ts: number }[]
->();
+// ── Redis key helpers ─────────────────────────────────────────────────────────
+const SIGNALING_TTL = 300; // 5 minutes
+const signalingKey = (room: string) => `signaling::${room}`;
 
-// Prune entries older than 5 minutes
-const STORE_TTL_MS = 5 * 60 * 1000;
-setInterval(() => {
+// ── Fallback in-memory store ──────────────────────────────────────────────────
+type Entry = {
+  type: string;
+  sdp?: string;
+  candidate?: RTCIceCandidateInit;
+  peerId: string;
+  ts: number;
+};
+
+const STORE_TTL_MS = SIGNALING_TTL * 1000;
+const MAX_ENTRIES = 10_000;
+const WARN_ENTRIES = 5_000;
+
+export const signalingStore = new Map<string, Entry[]>();
+let pruneTimer: ReturnType<typeof setInterval> | null = null;
+let memWarningEmitted = false;
+
+function pruneExpired() {
   const cutoff = Date.now() - STORE_TTL_MS;
   for (const [key, entries] of signalingStore) {
     const fresh = entries.filter((e) => e.ts > cutoff);
     if (fresh.length === 0) signalingStore.delete(key);
     else signalingStore.set(key, fresh);
   }
-}, 60_000).unref?.();
-
-interface RTCIceCandidateInit {
-  candidate?: string;
-  sdpMid?: string | null;
-  sdpMLineIndex?: number | null;
 }
 
+export function ensurePruningInterval() {
+  if (pruneTimer !== null) return;
+  pruneTimer = setInterval(pruneExpired, 60_000);
+  if (typeof pruneTimer === 'object' && typeof pruneTimer.unref === 'function') {
+    pruneTimer.unref();
+  }
+}
+
+// Start eagerly — unref'd so it won't block Node.js exit
+ensurePruningInterval();
+
+export function clearPruningInterval() {
+  if (pruneTimer !== null) {
+    clearInterval(pruneTimer);
+    pruneTimer = null;
+  }
+}
+
+// ── HMR cleanup (dev only) ───────────────────────────────────────────────────
+declare const module: { hot?: { dispose?: (cb: () => void) => void } };
+if (typeof module !== 'undefined' && module.hot) {
+  module.hot.dispose(() => {
+    clearPruningInterval();
+  });
+}
+
+// ── Redis-backed store helpers ────────────────────────────────────────────────
+async function redisStoreEntry(key: string, entry: Entry) {
+  const redis = getRedisClient();
+  if (!redis) return false;
+
+  try {
+    const existing = await redisGet<Entry[]>(key);
+    const list = existing ?? [];
+    list.push(entry);
+    await redisSet(key, list, SIGNALING_TTL);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function redisReadEntries(key: string): Promise<Entry[]> {
+  const entries = await redisGet<Entry[]>(key);
+  return entries ?? [];
+}
+
+// ── In-memory fallback with bounds ────────────────────────────────────────────
+function memStoreEntry(key: string, entry: Entry) {
+  if (signalingStore.size >= MAX_ENTRIES) {
+    // Drop oldest room by earliest entry timestamp
+    let oldestKey: string | null = null;
+    let oldestTs = Infinity;
+    for (const [k, v] of signalingStore) {
+      if (v.length > 0 && v[0].ts < oldestTs) {
+        oldestTs = v[0].ts;
+        oldestKey = k;
+      }
+    }
+    if (oldestKey) signalingStore.delete(oldestKey);
+  }
+
+  if (signalingStore.size >= WARN_ENTRIES && !memWarningEmitted) {
+    console.warn(
+      `[signaling] In-memory store has ${signalingStore.size} entries (max ${MAX_ENTRIES}). Consider configuring Redis.`,
+    );
+    memWarningEmitted = true;
+  }
+
+  const existing = signalingStore.get(key) ?? [];
+  existing.push(entry);
+  signalingStore.set(key, existing);
+  ensurePruningInterval();
+}
+
+// ── ICE server generation ─────────────────────────────────────────────────────
 function generateIceServers(peerId: string) {
   const expiry = Math.floor(Date.now() / 1000) + TURN_CREDENTIAL_TTL;
   const username = `${expiry}:${peerId}`;
@@ -60,6 +143,12 @@ function generateIceServers(peerId: string) {
     { urls: `turn:${TURN_HOST}:${TURN_PORT}?transport=tcp`, username, credential },
     { urls: `turns:${TURN_HOST}:${TURN_TLS_PORT}`, username, credential },
   ];
+}
+
+interface RTCIceCandidateInit {
+  candidate?: string;
+  sdpMid?: string | null;
+  sdpMLineIndex?: number | null;
 }
 
 /**
@@ -105,9 +194,13 @@ export async function POST(req: NextRequest) {
     }
 
     const key = to ? `${roomId}:${to}` : roomId;
-    const existing = signalingStore.get(key) ?? [];
-    existing.push({ type, sdp, candidate, peerId, ts: Date.now() });
-    signalingStore.set(key, existing);
+    const entry: Entry = { type, sdp, candidate, peerId, ts: Date.now() };
+
+    // Try Redis first; fall back to in-memory
+    const usedRedis = await redisStoreEntry(key, entry);
+    if (!usedRedis) {
+      memStoreEntry(key, entry);
+    }
 
     return NextResponse.json({ ok: true });
   } catch (err) {

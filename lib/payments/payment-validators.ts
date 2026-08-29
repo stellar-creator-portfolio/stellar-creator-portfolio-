@@ -4,6 +4,8 @@ export const bountyEscrowPaymentSchema = z.object({
   type: z.literal('bounty_escrow'),
   bountyId: z.string().min(1).max(128),
   amountCents: z.number().int().positive().max(99_999_999),
+  usdAmountCents: z.number().int().positive().max(99_999_999).optional(),
+  minXlmOut: z.number().positive().optional(),
   currency: z.string().length(3).optional().default('usd'),
 })
 

@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { protectedProcedure, publicProcedure, router } from './trpc-setup';
 import { prisma } from '@/lib/prisma';
+import { disputeRouter } from './routers/dispute';
+import { createEscrow } from '@/lib/payments/escrow-service';
 
 // Root router with Prisma-backed queries
 export const appRouter = router({
@@ -225,17 +227,27 @@ export const appRouter = router({
           payerAddress: z.string(),
           payeeAddress: z.string(),
           amount: z.number().positive(),
+          usdAmountCents: z.number().int().positive().optional(),
+          minXlmOut: z.number().positive().optional(),
           token: z.string(),
         })
       )
-      .mutation(async ({ input }) => {
-        // This would integrate with the Stellar escrow smart contract
-        // For now, return a mock response
+      .mutation(async ({ ctx, input }) => {
+        const escrow = await createEscrow({
+          bountyId: input.bountyId,
+          clientUserId: ctx.user!.id,
+          amountCents: Math.round(input.amount * 100),
+          usdAmountCents: input.usdAmountCents ?? Math.round(input.amount * 100),
+          minXlmOut: input.minXlmOut,
+        });
+
         return {
-          escrowId: `escrow-${Date.now()}`,
-          txHash: `tx-${Date.now()}`,
+          escrowId: escrow.id,
+          txHash: escrow.settlementTxHashes?.[0] ?? '',
           operation: 'deposit',
-          status: 'pending',
+          status: escrow.lockedPriceMicroUsd ? 'confirmed' : 'pending',
+          lockedPriceMicroUsd: escrow.lockedPriceMicroUsd,
+          usedFallbackPrice: escrow.usedFallbackPrice,
         };
       }),
 
@@ -309,6 +321,9 @@ export const appRouter = router({
       }),
   }),
 
+  // Dispute resolution endpoints
+  disputes: disputeRouter,
+
   // Analytics endpoints
   analytics: router({
     dashboard: protectedProcedure
@@ -340,7 +355,10 @@ export const appRouter = router({
           },
         };
       }),
-  }),
+   }),
+
+  // Dispute endpoints (payout integrity)
+  dispute: disputeRouter,
 });
 
 export type AppRouter = typeof appRouter;

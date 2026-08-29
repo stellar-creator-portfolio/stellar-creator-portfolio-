@@ -76,8 +76,31 @@ async function decryptText(ciphertext: string, iv: string, key: CryptoKey) {
   return textDecoder.decode(plaintextBuffer)
 }
 
-// exported for unit testing
 export const messageCrypto = { deriveKey, encryptText, decryptText }
+
+function getWsUrl(threadId: string): string {
+  if (typeof window === 'undefined') return ''
+  const base = process.env.NEXT_PUBLIC_MSG_WS_URL || `ws://${window.location.hostname}:3002`
+  const token = getToken()
+  return `${base}?threadId=${encodeURIComponent(threadId)}${token ? `&token=${encodeURIComponent(token)}` : ''}`
+}
+
+function getApiBase(): string {
+  return '/api/messages'
+}
+
+function getToken(): string | null {
+  try {
+    return localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token') || null
+  } catch {
+    return null
+  }
+}
+
+function authHeaders(): Record<string, string> {
+  const token = getToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
 
 export function useMessages(threadId: string, currentUserId: string) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -85,6 +108,9 @@ export function useMessages(threadId: string, currentUserId: string) {
   const [status, setStatus] = useState<WSStatus>('connecting')
   const [passphrase, setPassphrase] = useState('')
   const [cryptoKey, setCryptoKey] = useState<CryptoKey | null>(null)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingHistory, setLoadingHistory] = useState(false)
   const socketRef = useRef<RealtimeWebSocket | null>(null)
   const pendingRead = useRef<Set<string>>(new Set())
 
@@ -117,10 +143,56 @@ export function useMessages(threadId: string, currentUserId: string) {
     return decrypted
   }, [cryptoKey])
 
+  // Initial history load via REST
+  useEffect(() => {
+    if (!threadId) return
+
+    const loadHistory = async () => {
+      setLoadingHistory(true)
+      try {
+        const params = new URLSearchParams({ threadId, limit: '200' })
+        const res = await fetch(`${getApiBase()}?${params}`, { headers: authHeaders() })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+        const decrypted = await decryptMessages(data.messages || [])
+        setMessages(decrypted)
+        setNextCursor(data.nextCursor || null)
+        setHasMore(data.hasMore || false)
+      } catch (err) {
+        console.error('Failed to load message history', err)
+      } finally {
+        setLoadingHistory(false)
+      }
+    }
+
+    loadHistory()
+  }, [threadId, decryptMessages])
+
+  // Cursor-based pagination
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || loadingHistory || !threadId) return
+
+    setLoadingHistory(true)
+    try {
+      const params = new URLSearchParams({ threadId, cursor: nextCursor, limit: '50' })
+      const res = await fetch(`${getApiBase()}?${params}`, { headers: authHeaders() })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      const decrypted = await decryptMessages(data.messages || [])
+      setMessages((prev) => [...prev, ...decrypted])
+      setNextCursor(data.nextCursor || null)
+      setHasMore(data.hasMore || false)
+    } catch (err) {
+      console.error('Failed to load more messages', err)
+    } finally {
+      setLoadingHistory(false)
+    }
+  }, [nextCursor, loadingHistory, threadId, decryptMessages])
+
+  // WebSocket connection for real-time
   useEffect(() => {
     if (typeof window === 'undefined') return
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-    const wsUrl = `${protocol}://${window.location.host}/api/messages?threadId=${threadId}`
+    const wsUrl = getWsUrl(threadId)
     const socket = new RealtimeWebSocket(wsUrl, { onStatusChange: setStatus })
     socketRef.current = socket
 
@@ -166,7 +238,6 @@ export function useMessages(threadId: string, currentUserId: string) {
   }, [threadId, currentUserId, decryptMessages])
 
   const sendMessage = async ({ text, file, threadId: tId, senderId, recipientId }: SendMessageInput) => {
-    if (!socketRef.current) return
     const key = cryptoKey || (await deriveKey(passphrase || senderId, threadId))
     const encrypted = await encryptText(text, key)
     let attachment: Attachment | null = null
@@ -182,7 +253,6 @@ export function useMessages(threadId: string, currentUserId: string) {
     }
 
     const payload = {
-      type: 'message',
       id: crypto.randomUUID(),
       threadId: tId,
       senderId,
@@ -193,7 +263,6 @@ export function useMessages(threadId: string, currentUserId: string) {
       metadata: { plainText: text.slice(0, 200) },
     }
 
-    socketRef.current.send(payload)
     const optimistic: ChatMessage = {
       id: payload.id,
       threadId: tId,
@@ -208,6 +277,24 @@ export function useMessages(threadId: string, currentUserId: string) {
       readBy: [senderId],
     }
     setMessages((prev) => [...prev, optimistic])
+
+    // Send via REST API
+    try {
+      const res = await fetch(getApiBase(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}))
+        toast.error(errBody.error || 'Failed to send message')
+        setMessages((prev) => prev.filter((m) => m.id !== payload.id))
+      }
+    } catch (err) {
+      console.error('Failed to send message', err)
+      toast.error('Failed to send message')
+      setMessages((prev) => prev.filter((m) => m.id !== payload.id))
+    }
   }
 
   const sendTyping = () => {
@@ -220,8 +307,21 @@ export function useMessages(threadId: string, currentUserId: string) {
     socketRef.current?.send({ type: 'read-receipt', messageId, userId: currentUserId })
   }
 
-  const moderate = (messageId: string, action: 'delete' | 'flag', reason?: string) => {
-    socketRef.current?.send({ type: 'moderate', messageId, action, moderatorId: currentUserId, reason })
+  const moderate = async (messageId: string, action: 'delete' | 'flag', reason?: string) => {
+    try {
+      const res = await fetch(getApiBase(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ action: 'moderate', messageId, moderateAction: action, reason }),
+      })
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}))
+        toast.error(errBody.error || 'Moderation failed')
+      }
+    } catch (err) {
+      console.error('Moderation failed', err)
+      toast.error('Moderation request failed')
+    }
   }
 
   const search = (q: string) => {
@@ -245,5 +345,8 @@ export function useMessages(threadId: string, currentUserId: string) {
     markRead,
     moderate,
     search,
+    loadMore,
+    hasMore,
+    loadingHistory,
   }
 }

@@ -236,6 +236,8 @@ export interface EscrowTransactionRequest {
   escrowId?: string;
   operation: EscrowOperation;
   amount?: number;
+  usdAmountCents?: number;
+  minXlmOut?: number;
   payerAddress: string;
   payeeAddress?: string;
   tokenAddress?: string;
@@ -265,6 +267,12 @@ export function validateEscrowTransaction(
   if (data.operation === 'deposit') {
     if (!data.payeeAddress?.trim()) errors.push({ field: 'payeeAddress', message: 'Payee address is required for deposit' });
     if (!data.amount || data.amount <= 0) errors.push({ field: 'amount', message: 'Amount must be positive' });
+    if (data.usdAmountCents !== undefined && data.usdAmountCents <= 0) {
+      errors.push({ field: 'usdAmountCents', message: 'USD amount must be positive' });
+    }
+    if (data.minXlmOut !== undefined && data.minXlmOut <= 0) {
+      errors.push({ field: 'minXlmOut', message: 'Minimum XLM output must be positive' });
+    }
     if (!data.tokenAddress?.trim()) errors.push({ field: 'tokenAddress', message: 'Token address is required for deposit' });
     if (data.fiatDenominated && !data.quote) errors.push({ field: 'quote', message: 'A live oracle quote is required' });
     if (data.fiatDenominated && !data.clientMinXlmOutStroops) {

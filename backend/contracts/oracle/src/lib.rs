@@ -49,6 +49,8 @@ pub struct ValuationResult {
 enum DataKey {
     OracleAddress,
     LastPrice,
+    /// Price valuation locked for a specific escrow at deposit time.
+    LockedValuation(u64),
 }
 
 #[contract]
@@ -172,6 +174,52 @@ impl OracleContract {
             locked_at: now,
             expires_at: core::cmp::min(now.saturating_add(LOCK_TTL_SECS), feed_expires_at),
         })
+    }
+
+    /// Snapshot the current USD/token valuation for an escrow.
+    ///
+    /// Settlement must use this locked valuation instead of whatever spot price
+    /// the oracle reports later.
+    pub fn lock_price(env: Env, escrow_id: u64, usd_amount_micro: i128) -> ValuationResult {
+        assert!(escrow_id > 0, "Escrow id must be positive");
+
+        let key = DataKey::LockedValuation(escrow_id);
+        if let Some(existing) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, ValuationResult>(&key)
+        {
+            assert_eq!(
+                existing.usd_amount_micro,
+                usd_amount_micro,
+                "Locked valuation amount mismatch"
+            );
+            return existing;
+        }
+
+        let valuation = Self::value_in_tokens(env.clone(), usd_amount_micro);
+        env.storage().persistent().set(&key, &valuation);
+
+        env.events().publish(
+            (Symbol::new(&env, "oracle"), Symbol::new(&env, "price_locked")),
+            (
+                escrow_id,
+                valuation.usd_amount_micro,
+                valuation.token_amount,
+                valuation.price_used,
+                valuation.used_fallback,
+            ),
+        );
+
+        valuation
+    }
+
+    /// Return the valuation locked for an escrow at deposit time.
+    pub fn get_locked_valuation(env: Env, escrow_id: u64) -> ValuationResult {
+        env.storage()
+            .persistent()
+            .get::<DataKey, ValuationResult>(&DataKey::LockedValuation(escrow_id))
+            .expect("Locked valuation not found")
     }
 }
 
