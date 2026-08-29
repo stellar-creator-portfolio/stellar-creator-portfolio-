@@ -24,6 +24,32 @@ export const escrowRefundSchema = z.object({
   escrowId: z.string().uuid(),
 })
 
+const positiveIntegerString = z.string().regex(/^\d+$/).refine((value) => BigInt(value) > 0n)
+
+export const lockedOracleQuoteSchema = z.object({
+  version: z.literal(1),
+  quoteId: z.string().uuid(),
+  bountyId: z.string().min(1).max(128),
+  assetContract: z.string().min(1).max(128),
+  usdAmountMicro: positiveIntegerString,
+  priceMicroUsd: positiveIntegerString,
+  minXlmOutStroops: positiveIntegerString,
+  sources: z.number().int().positive(),
+  issuedAt: z.number().int().nonnegative(),
+  expiresAt: z.number().int().positive(),
+  signature: z.string().regex(/^[0-9a-f]{64}$/i),
+})
+
+/** Funding payload accepted by the server-side settlement boundary. */
+export const oracleEscrowTransactionSchema = z.object({
+  bountyId: z.string().min(1).max(128),
+  operation: z.literal('deposit'),
+  payerAddress: z.string().min(1).max(128),
+  payeeAddress: z.string().min(1).max(128),
+  clientMinXlmOutStroops: positiveIntegerString,
+  quote: lockedOracleQuoteSchema,
+})
+
 export const paymentPostBodySchema = z.discriminatedUnion('type', [
   bountyEscrowPaymentSchema,
   subscriptionCheckoutSchema,
@@ -32,3 +58,4 @@ export const paymentPostBodySchema = z.discriminatedUnion('type', [
 ])
 
 export type PaymentPostBody = z.infer<typeof paymentPostBodySchema>
+export type OracleEscrowTransaction = z.infer<typeof oracleEscrowTransactionSchema>

@@ -21,6 +21,7 @@ import {
   type ReviewSubmission,
   type EscrowTransactionRequest,
   type EscrowTransactionResponse,
+  type LockedOracleQuote,
   isApiSuccess,
 } from "./api-models";
 import { notifyLoadingChange } from "../components/layout-provider";
@@ -349,6 +350,16 @@ export async function submitEscrowTransaction(
   return apiFetch(`${API_BASE}/escrow/transaction`, {
     method: "POST",
     body: JSON.stringify(data),
+  });
+}
+
+/** POST /api/v1/escrow/quote — obtain an authenticated, short-lived valuation. */
+export async function fetchEscrowQuote(
+  bountyId: string,
+): Promise<LockedOracleQuote> {
+  return apiFetch(`${API_BASE}/escrow/quote`, {
+    method: "POST",
+    body: JSON.stringify({ bountyId }),
   });
 }
 

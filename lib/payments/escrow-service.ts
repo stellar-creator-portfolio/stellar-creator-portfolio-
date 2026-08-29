@@ -8,6 +8,10 @@
 
 import { prisma } from "@/lib/prisma";
 import type { Escrow } from "@prisma/client";
+import {
+  verifyLockedOracleQuote,
+  type LockedOracleQuote,
+} from "./oracle-quote-service";
 
 /** Thrown when an optimistic-locking version check fails (concurrent modification). */
 export class EscrowConflictError extends Error {
@@ -30,6 +34,34 @@ export type EscrowStatus =
   | "released"
   | "refunded"
   | "failed";
+
+/** Resolve fiat funding exclusively from a signed, server-locked valuation. */
+export function resolveOracleEscrowFunding(params: {
+  quote: LockedOracleQuote;
+  quoteSigningSecret: string;
+  bountyId: string;
+  usdAmountMicro: string;
+  clientMinXlmOutStroops: string;
+  nowSeconds?: number;
+}): { amountStroops: string; assetContract: string; quoteId: string } {
+  const lockedMinimum = verifyLockedOracleQuote({
+    quote: params.quote,
+    secret: params.quoteSigningSecret,
+    expectedBountyId: params.bountyId,
+    expectedUsdAmountMicro: params.usdAmountMicro,
+    clientMinXlmOutStroops: params.clientMinXlmOutStroops,
+    nowSeconds: params.nowSeconds,
+  });
+  const amountStroops =
+    BigInt(params.clientMinXlmOutStroops) > BigInt(lockedMinimum)
+      ? params.clientMinXlmOutStroops
+      : lockedMinimum;
+  return {
+    amountStroops,
+    assetContract: params.quote.assetContract,
+    quoteId: params.quote.quoteId,
+  };
+}
 
 // Map Prisma Escrow rows to the public shape
 export interface EscrowRecord {

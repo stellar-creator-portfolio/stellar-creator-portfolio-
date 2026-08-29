@@ -216,6 +216,20 @@ export function validateReview(data: Partial<ReviewSubmission>): FieldError[] | 
 /** Supported escrow operations submitted via the Stellar SDK. */
 export type EscrowOperation = 'deposit' | 'release' | 'refund' | 'dispute';
 
+export interface LockedOracleQuote {
+  version: 1;
+  quoteId: string;
+  bountyId: string;
+  assetContract: string;
+  usdAmountMicro: string;
+  priceMicroUsd: string;
+  minXlmOutStroops: string;
+  sources: number;
+  issuedAt: number;
+  expiresAt: number;
+  signature: string;
+}
+
 /** Payload for submitting an escrow transaction. */
 export interface EscrowTransactionRequest {
   bountyId: string;
@@ -226,6 +240,9 @@ export interface EscrowTransactionRequest {
   payeeAddress?: string;
   tokenAddress?: string;
   timelock?: number;
+  fiatDenominated?: boolean;
+  clientMinXlmOutStroops?: string;
+  quote?: LockedOracleQuote;
 }
 
 /** Response returned after a successful escrow transaction submission. */
@@ -249,6 +266,10 @@ export function validateEscrowTransaction(
     if (!data.payeeAddress?.trim()) errors.push({ field: 'payeeAddress', message: 'Payee address is required for deposit' });
     if (!data.amount || data.amount <= 0) errors.push({ field: 'amount', message: 'Amount must be positive' });
     if (!data.tokenAddress?.trim()) errors.push({ field: 'tokenAddress', message: 'Token address is required for deposit' });
+    if (data.fiatDenominated && !data.quote) errors.push({ field: 'quote', message: 'A live oracle quote is required' });
+    if (data.fiatDenominated && !data.clientMinXlmOutStroops) {
+      errors.push({ field: 'clientMinXlmOutStroops', message: 'Server-locked minimum is required' });
+    }
   }
   return errors.length > 0 ? errors : null;
 }
