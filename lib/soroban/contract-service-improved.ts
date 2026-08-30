@@ -24,6 +24,10 @@ import { stellarClient } from "@/services/api/stellar/client";
 import { Signer } from "@/services/api/stellar/types";
 import { getSequenceManager } from "./sequence-manager";
 import { getTransactionQueue } from "./transaction-queue";
+import {
+  verifyLockedOracleQuote,
+  type LockedOracleQuote,
+} from "@/lib/payments/oracle-quote-service";
 
 /**
  * Improved contract service with sequence management
@@ -153,6 +157,33 @@ export class ImprovedContractService {
       xlmAmount: Number(valuation.token_amount),
       txHashes,
     };
+  }
+
+  /**
+   * Resolve the amount submitted to `deposit` from a signed server valuation.
+   * The caller may tighten the minimum, but can never loosen it below the
+   * contract-derived amount.
+   */
+  deriveServerLockedMinimum(params: {
+    quote: LockedOracleQuote;
+    quoteSigningSecret: string;
+    bountyId: string;
+    usdAmountMicro: string;
+    clientMinXlmOutStroops?: string;
+    nowSeconds?: number;
+  }): string {
+    const lockedMinimum = verifyLockedOracleQuote({
+      quote: params.quote,
+      secret: params.quoteSigningSecret,
+      expectedBountyId: params.bountyId,
+      expectedUsdAmountMicro: params.usdAmountMicro,
+      clientMinXlmOutStroops: params.clientMinXlmOutStroops,
+      nowSeconds: params.nowSeconds,
+    });
+    if (!params.clientMinXlmOutStroops) return lockedMinimum;
+    return BigInt(params.clientMinXlmOutStroops) > BigInt(lockedMinimum)
+      ? params.clientMinXlmOutStroops
+      : lockedMinimum;
   }
 
   /**

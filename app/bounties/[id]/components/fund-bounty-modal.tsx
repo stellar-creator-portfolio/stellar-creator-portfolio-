@@ -1,9 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { submitEscrowTransaction } from '@/lib/api-client';
-import { validateEscrowTransaction } from '@/lib/api-models';
+import { fetchEscrowQuote, submitEscrowTransaction } from '@/lib/api-client';
+import { validateEscrowTransaction, type LockedOracleQuote } from '@/lib/api-models';
 import { ApiClientError } from '@/lib/api-client';
 import { CheckCircle, Loader2, X, ExternalLink } from 'lucide-react';
 
@@ -24,27 +24,43 @@ export function FundBountyModal({
   currency,
   onClose,
 }: FundBountyModalProps) {
-  const [amount, setAmount] = useState(String(budget));
-  const parsedAmount = Number(amount);
-  const oracleQuote = {
-    priceMicroUsd: 120_000,
-    sources: 0,
-  };
-  const xlmPreview = parsedAmount > 0
-    ? (parsedAmount * 1_000_000) / oracleQuote.priceMicroUsd
-    : 0;
   const [walletAddress, setWalletAddress] = useState('');
   const [payeeAddress, setPayeeAddress] = useState('');
-  const [tokenAddress, setTokenAddress] = useState('USDC_TOKEN_ADDRESS');
+  const [quote, setQuote] = useState<LockedOracleQuote | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(true);
   const [state, setState] = useState<FundState>('idle');
   const [error, setError] = useState('');
   const [txHash, setTxHash] = useState('');
 
+  useEffect(() => {
+    let active = true;
+    setQuoteLoading(true);
+    fetchEscrowQuote(bountyId)
+      .then((nextQuote) => {
+        if (active) {
+          setQuote(nextQuote);
+          setError('');
+        }
+      })
+      .catch((err) => {
+        if (active) {
+          setQuote(null);
+          setError(err instanceof Error ? err.message : 'Live oracle quote unavailable');
+        }
+      })
+      .finally(() => {
+        if (active) setQuoteLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [bountyId]);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
-    if (!parsedAmount || parsedAmount <= 0) {
-      setError('Amount must be a positive number');
+    if (!quote || quote.expiresAt <= Math.floor(Date.now() / 1000)) {
+      setError('The live oracle quote expired. Close and reopen this dialog to refresh it.');
       return;
     }
     if (!walletAddress.trim()) {
@@ -59,12 +75,13 @@ export function FundBountyModal({
     const txRequest = {
       bountyId,
       operation: 'deposit' as const,
-      amount: parsedAmount,
-      usdAmountCents: Math.round(parsedAmount * 100),
-      minXlmOut: Math.floor(xlmPreview * 0.95),
+      amount: Number(quote.minXlmOutStroops) / 10_000_000,
       payerAddress: walletAddress.trim(),
       payeeAddress: payeeAddress.trim(),
-      tokenAddress: tokenAddress.trim(),
+      tokenAddress: quote.assetContract,
+      fiatDenominated: true,
+      clientMinXlmOutStroops: quote.minXlmOutStroops,
+      quote,
     };
 
     const validationErrors = validateEscrowTransaction(txRequest);
@@ -154,24 +171,31 @@ export function FundBountyModal({
                   type="number"
                   min="0.01"
                   step="0.01"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
+                  value={budget}
+                  readOnly
                   className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   required
                 />
               </div>
 
-              <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-muted-foreground">USD to XLM preview</span>
-                  <span className="font-medium text-foreground">
-                    {Number.isFinite(xlmPreview) ? xlmPreview.toFixed(2) : '0.00'} XLM
+              <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
+                {quoteLoading ? (
+                  <span className="inline-flex items-center gap-2 text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading live oracle valuation…
                   </span>
-                </div>
-                {oracleQuote.sources === 0 && (
-                  <p className="mt-1 text-xs text-amber-600">
-                    Slippage warning: oracle fallback price is active.
-                  </p>
+                ) : quote ? (
+                  <div className="space-y-1">
+                    <p>
+                      Minimum deposit:{' '}
+                      <strong>{(Number(quote.minXlmOutStroops) / 10_000_000).toFixed(7)} XLM</strong>
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Live price ${(Number(quote.priceMicroUsd) / 1_000_000).toFixed(6)} per XLM ·{' '}
+                      {quote.sources} sources · expires in at most 60 seconds
+                    </p>
+                  </div>
+                ) : (
+                  <span className="text-destructive">Funding is disabled until a live quote is available.</span>
                 )}
               </div>
 
@@ -207,21 +231,6 @@ export function FundBountyModal({
                 />
               </div>
 
-              {/* Token address */}
-              <div className="space-y-1">
-                <label htmlFor="fund-token" className="text-sm font-medium">
-                  Token Contract Address
-                </label>
-                <input
-                  id="fund-token"
-                  type="text"
-                  value={tokenAddress}
-                  onChange={(e) => setTokenAddress(e.target.value)}
-                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  required
-                />
-              </div>
-
               {/* Error */}
               {error && (
                 <p role="alert" className="text-sm text-destructive">
@@ -243,7 +252,7 @@ export function FundBountyModal({
                 <Button
                   type="submit"
                   className="flex-1"
-                  disabled={state === 'submitting'}
+                  disabled={state === 'submitting' || quoteLoading || !quote}
                 >
                   {state === 'submitting' ? (
                     <>
