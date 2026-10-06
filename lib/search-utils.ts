@@ -1,4 +1,4 @@
-import { supabaseServer } from '@/lib/db';
+import { supabaseServer } from '@/lib/db/server';
 
 export interface SearchFilters {
   query?: string;
